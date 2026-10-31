@@ -22,6 +22,7 @@ import logging
 import sys
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger("enter_router.ui.tray")
@@ -47,6 +48,24 @@ WINDOW_TITLE = "enter-router"
 # --- Shell_NotifyIcon -----------------------------------------------------
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP = 0x01, 0x02, 0x04
+#: Callback lParam when the user CLICKS a balloon/toast (v2-s). Windows sends it
+#: through the icon's uCallbackMessage window, which is this tray window.
+NIN_BALLOONUSERCLICK = 0x0405
+
+# --- icons ----------------------------------------------------------------
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x0010
+LR_DEFAULTSIZE = 0x0040
+SM_CXSMICON = 49
+
+#: Where ``scripts/make_icon.py`` writes the committed icons (v2-u). Driven from
+#: the source tree, like everything else in this project (no build step).
+ASSET_DIR = Path(__file__).resolve().parents[1] / "assets"
+
+
+def icon_path(state: str) -> Path:
+    """The committed .ico for a tray state (drawn, not generated)."""
+    return ASSET_DIR / f"tray-{state}.ico"
 
 # --- menus ---------------------------------------------------------------
 MF_STRING, MF_SEPARATOR, MF_GRAYED = 0x0000, 0x0800, 0x0001
@@ -236,6 +255,11 @@ class _API:
         self.CreateIconIndirect = proto(user32, "CreateIconIndirect", wt.HICON,
                                         [ctypes.POINTER(self.ICONINFO)])
         self.DestroyIcon = proto(user32, "DestroyIcon", wt.BOOL, [wt.HICON])
+        self.LoadImageW = proto(user32, "LoadImageW", wt.HANDLE,
+                                [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int,
+                                 ctypes.c_int, wt.UINT])
+        self.GetSystemMetrics = proto(user32, "GetSystemMetrics", ctypes.c_int,
+                                      [ctypes.c_int])
         self.FillRect = proto(user32, "FillRect", ctypes.c_int,
                               [wt.HDC, ctypes.POINTER(self.RECT), wt.HBRUSH])
         self.GetDC = proto(user32, "GetDC", wt.HDC, [wt.HWND])
@@ -280,6 +304,29 @@ def _wnd_proc(hwnd, msg, wparam, lparam):     # pragma: no cover - Windows only
     if _instance is not None:
         return _instance.handle_message(hwnd, msg, wparam, lparam)
     return _get_api().DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
+def _load_icon_file(state: str) -> int:        # pragma: no cover - Windows only
+    """Load ``assets/tray-<state>.ico`` at the tray's own small-icon size.
+
+    Drawn icons (``scripts/make_icon.py``) carry the state colour *and* the return
+    arrow; the GDI square below stays as the fallback for a source tree where the
+    assets were never generated.
+    """
+    path = icon_path(state)
+    if not path.exists():
+        return 0
+    api = _get_api()
+    size = int(api.GetSystemMetrics(SM_CXSMICON)) or 16
+    try:
+        handle = api.LoadImageW(None, str(path), IMAGE_ICON, size, size,
+                                LR_LOADFROMFILE)
+    except BaseException:
+        log.exception("LoadImageW(%s) failed — falling back to the drawn square", path)
+        return 0
+    if handle:
+        log.info("tray icon from %s (%dpx)", path.name, size)
+    return int(handle) if handle else 0
 
 
 def _solid_icon(colorref: int, size: int = 16) -> int:  # pragma: no cover - Windows only
@@ -438,7 +485,7 @@ class TrayIcon:
         if not IS_WINDOWS:
             return 0
         if state not in self._icons:
-            icon = _solid_icon(state_color(state))
+            icon = _load_icon_file(state) or _solid_icon(state_color(state))
             self._icons[state] = int(icon) if icon else self._fallback_icon
         return self._icons[state] or self._fallback_icon
 
@@ -492,6 +539,11 @@ class TrayIcon:
             mouse = int(lparam) & 0xFFFF
             if mouse in (WM_RBUTTONUP, WM_CONTEXTMENU):
                 self._show_menu()
+            elif mouse == NIN_BALLOONUSERCLICK:
+                # v2-s: the operator clicked a balloon ("登録しました" etc). The
+                # command carries no widget detail — the runtime asks the app
+                # which place the last balloon pointed at.
+                self._emit("balloon")
             elif mouse in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
                 self._emit("settings")
             return 0

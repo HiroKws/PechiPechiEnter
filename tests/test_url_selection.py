@@ -14,8 +14,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from enter_router.core.browser_url import (  # noqa: E402
-    ROLE_DOCUMENT, STATE_FOCUSED, AccNode, is_absolute_url, is_trimmed_url,
-    page_title_of, select_document_url)
+    ROLE_DOCUMENT, STATE_FOCUSED, AccNode, host_glob, is_absolute_url, is_trimmed_url,
+    page_title_of, select_document_url, url_host)
 
 ROLE_APPLICATION = 0x0E
 ROLE_PROGRESSBAR = 0x2E
@@ -106,6 +106,35 @@ class TestSelectDocumentUrl(unittest.TestCase):
 
     def test_empty_snapshot(self):
         self.assertIsNone(select_document_url([], "Greeting - Claude"))
+
+
+class TestSitePattern(unittest.TestCase):
+    """v2-o: what the registration hotkey stores for a site (host only)."""
+
+    def test_host_is_the_authority_only(self):
+        self.assertEqual(url_host("https://claude.ai/chat/5f3c1a?x=1"), "claude.ai")
+        self.assertEqual(url_host("https://www.redouble.com/laravel/10.x/"), "www.redouble.com")
+        self.assertEqual(url_host("http://localhost:3000/app"), "localhost:3000")
+        self.assertIsNone(url_host(None))
+        self.assertIsNone(url_host("about:newtab"))          # not a scoped page
+        self.assertIsNone(url_host("Google で検索"))          # placeholder text
+
+    def test_trimmed_address_bar_still_yields_a_host(self):
+        # Firefox displays the address bar without the scheme
+        self.assertEqual(url_host("claude.ai/chat/af1d59e2"), "claude.ai")
+
+    def test_the_pattern_is_anchored_at_the_scheme(self):
+        glob = host_glob("https://claude.ai/chat/5f3c1a")
+        self.assertEqual(glob, "*://claude.ai*")
+        # the anchor is the point: a bare "*claude.ai*" would scope notclaude.ai
+        import fnmatch
+        self.assertTrue(fnmatch.fnmatch("https://claude.ai/settings", glob))
+        self.assertTrue(fnmatch.fnmatch("https://claude.ai", glob))
+        self.assertFalse(fnmatch.fnmatch("https://notclaude.ai/chat", glob))
+
+    def test_host_metacharacters_are_escaped(self):
+        self.assertEqual(host_glob("https://we*ird.example/a"), "*://we[*]ird.example*")
+        self.assertIsNone(host_glob(None))
 
 
 if __name__ == "__main__":

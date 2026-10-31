@@ -98,5 +98,107 @@ class PlatformSafetyTests(unittest.TestCase):
         self.assertIsNone(tray._api)          # still never touched Win32
 
 
+class BalloonClickTests(unittest.TestCase):
+    """v2-s: a clicked notification opens the place it refers to.
+
+    The Win32 side (Shell_NotifyIcon -> NIN_BALLOONUSERCLICK) is exercised for
+    real on Windows; what is asserted here is the routing that turns the click
+    into "settings window, profile tab".
+    """
+
+    class _Controller:
+        def __init__(self, action: str) -> None:
+            self.action = action
+            self.taken = 0
+
+        def take_notification_action(self) -> str:
+            self.taken += 1
+            action, self.action = self.action, ""
+            return action
+
+        def get_status(self):
+            return None
+
+    def _runtime(self, action, controller=None):
+        from enter_router.ui import runtime as runtime_mod
+        controller = controller if controller is not None else self._Controller(action)
+        rt = runtime_mod.UiRuntime(controller)
+        calls: list = []
+        rt.open_settings = lambda tab=None, focus=None: calls.append((tab, focus))  # type: ignore[assignment]
+        return rt, controller, calls
+
+    def test_a_clicked_registration_toast_opens_the_profile_tab(self):
+        rt, controller, calls = self._runtime("profiles:claude-ai")
+        rt.handle_command("balloon")
+        self.assertEqual(calls, [("profiles", "claude-ai")])
+        self.assertEqual(controller.taken, 1)
+
+    def test_the_action_is_consumed_not_reused(self):
+        rt, controller, calls = self._runtime("profiles:claude-ai")
+        rt.handle_command("balloon")
+        rt.handle_command("balloon")
+        self.assertEqual(calls, [("profiles", "claude-ai"), (None, None)])
+
+    def test_a_tab_without_a_focus_id_just_selects_the_tab(self):
+        rt, _controller, calls = self._runtime("profiles")
+        rt.handle_command("balloon")
+        self.assertEqual(calls, [("profiles", None)])
+
+    def test_a_clicked_toast_without_an_action_just_opens_settings(self):
+        rt, _controller, calls = self._runtime("")
+        rt.handle_command("balloon")
+        self.assertEqual(calls, [(None, None)])
+
+    def test_an_older_controller_without_the_method_still_opens_settings(self):
+        rt, _controller, calls = self._runtime("", controller=object())
+        rt.handle_command("balloon")
+        self.assertEqual(calls, [(None, None)])
+
+    def test_the_tab_names_resolve_to_real_tabs(self):
+        from enter_router.ui import settings as ui_settings
+        self.assertEqual(ui_settings.TAB_BY_NAME["profiles"], "tab_b")
+        self.assertEqual(ui_settings.TAB_BY_NAME["operations"], "tab_a")
+        self.assertEqual(ui_settings.TAB_BY_NAME["test"], "tab_c")
+
+
+class IconAssetTests(unittest.TestCase):
+    """v2-u: the icons are drawn by scripts/make_icon.py and committed."""
+
+    def test_every_state_has_a_committed_icon(self):
+        for state in tray.STATE_ORDER:
+            path = tray.icon_path(state)
+            self.assertTrue(path.exists(), path)
+            self.assertGreater(path.stat().st_size, 500, path)
+
+    def test_the_app_icon_is_committed(self):
+        self.assertTrue((tray.ASSET_DIR / "enter-router.ico").exists())
+
+    def test_the_files_are_real_windows_icons(self):
+        for state in tray.STATE_ORDER:
+            head = tray.icon_path(state).read_bytes()[:4]
+            self.assertEqual(head, b"\x00\x00\x01\x00", state)   # ICO magic
+
+    def test_the_state_colours_are_the_tray_colours(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "make_icon", tray.ASSET_DIR.parents[2] / "scripts" / "make_icon.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)          # type: ignore[union-attr]
+        for state, rgb in module.STATE_RGB.items():
+            colorref = tray.state_color(state)
+            expected = (colorref & 0xFF, (colorref >> 8) & 0xFF, (colorref >> 16) & 0xFF)
+            self.assertEqual(rgb, expected, state)
+
+    def test_the_16px_stroke_stays_thin_enough(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "make_icon", tray.ASSET_DIR.parents[2] / "scripts" / "make_icon.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)          # type: ignore[union-attr]
+        # 3 px of a 16 px canvas closed the elbow gap (measured) — keep it at 2
+        self.assertEqual(module.stroke_width(16), 2)
+        self.assertGreaterEqual(module.stroke_width(256), 20)
+
+
 if __name__ == "__main__":
     unittest.main()

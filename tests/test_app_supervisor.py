@@ -50,7 +50,7 @@ class HookExitTests(unittest.TestCase):
         self.repairs: list[int] = []
         self.app._install_hook = lambda: self.repairs.append(1)
         self.notices: list[tuple] = []
-        self.app._notify = lambda title, body, level="info": self.notices.append(
+        self.app._notify = lambda title, body, level="info", action="": self.notices.append(
             (title, body, level))
 
     def test_unrequested_exit_keeps_running_so_the_supervisor_repairs_it(self):

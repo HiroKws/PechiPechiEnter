@@ -143,6 +143,16 @@ class UiRuntime:
         if command == "settings":
             self.open_settings()
             return
+        if command == "balloon":
+            # v2-s/v2-t: a clicked notification opens the place it refers to
+            # ("登録しました" -> プロファイルタブ, with the new profile selected).
+            # The action is "<tab>" or "<tab>:<focus-id>"; the app decides, the UI
+            # only knows tab names and profile ids, never the notification.
+            tab, _sep, focus = self._take_notification_action().partition(":")
+            if tab:
+                log.info("balloon click -> settings tab %r focus=%r", tab, focus or "-")
+            self.open_settings(tab=tab or None, focus=focus or None)
+            return
         if command == "panic":
             self.controller.panic_stop()
         elif command == "toggle":
@@ -157,6 +167,16 @@ class UiRuntime:
             log.warning("unknown ui command %r", command)
             return
         self.refresh_now()
+
+    def _take_notification_action(self) -> str:
+        take = getattr(self.controller, "take_notification_action", None)
+        if take is None:
+            return ""
+        try:
+            return take() or ""
+        except Exception:                      # noqa: BLE001 - a click must still open
+            log.exception("take_notification_action failed")
+            return ""
 
     def shutdown_app(self) -> None:
         """退出: stop the UI, then let the composition root stop the app."""
@@ -185,17 +205,26 @@ class UiRuntime:
             self.settings.refresh_status(status)
 
     # -- settings window ------------------------------------------------
-    def open_settings(self) -> SettingsWindow | None:
+    def open_settings(self, tab: str | None = None,
+                      focus: str | None = None) -> SettingsWindow | None:
         if self.root is None:
             return None
         if self.settings is not None and self.settings.win.winfo_exists():
             self.settings.focus()
             self.settings.refresh_status(self.controller.get_status())
+            if tab:
+                self.settings.select_tab(tab)
+            if focus:
+                self.settings.select_profile(focus)
             return self.settings
         self.settings = SettingsWindow(self.root, self.controller,
                                        on_close=self._on_settings_closed)
         self.settings.refresh_status(self.controller.get_status())
         self.settings.focus()
+        if tab:
+            self.settings.select_tab(tab)
+        if focus:
+            self.settings.select_profile(focus)
         return self.settings
 
     def _on_settings_closed(self) -> None:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import threading
 from typing import Literal
 
 from enter_router.platform import win32lib
@@ -33,8 +34,21 @@ _LEVEL_FLAGS: dict[str, int] = {"info": NIIF_INFO, "warning": NIIF_WARNING,
 
 _tray_hwnd: int = 0
 _tray_uid: int = 1
+#: Where the LAST balloon wants the user to land when it is clicked (v2-s).
+#: The tray window receives NIN_BALLOONUSERCLICK and asks the app for this; the
+#: string is a UI tab name ("profiles"), never a widget handle (ui/ owns those).
+_click_action: str = ""
+_click_lock = threading.Lock()
 
 _protos_ready = False
+
+
+def take_click_action() -> str:
+    """Return and clear the action attached to the most recent notification."""
+    global _click_action
+    with _click_lock:
+        action, _click_action = _click_action, ""
+    return action
 
 
 def _init_win32() -> None:
@@ -74,11 +88,20 @@ def _beep(level: str) -> None:
         pass
 
 
-def notify(title: str, body: str, level: Level = "info") -> None:
-    """Best-effort, bounded. Never raises."""
+def notify(title: str, body: str, level: Level = "info", action: str = "") -> None:
+    """Best-effort, bounded. Never raises.
+
+    ``action`` names the place a CLICK on the balloon should open (v2-s). It is
+    set for every notification — including an empty one — so the action always
+    belongs to the balloon the user actually clicked, never to an older one.
+    """
+    global _click_action
     log.log({"info": logging.INFO, "warning": logging.WARNING,
              "error": logging.ERROR}.get(level, logging.INFO),
-            "NOTIFY [%s] %s — %s", level, title, body)
+            "NOTIFY [%s] %s — %s%s", level, title, body,
+            f" (click -> {action})" if action else "")
+    with _click_lock:
+        _click_action = action or ""
     if level in ("warning", "error"):
         _beep(level)
     if not _tray_hwnd:

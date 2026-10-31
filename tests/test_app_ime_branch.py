@@ -61,6 +61,11 @@ class ImeBranchLogTests(unittest.TestCase):
         self.assertIn("profile=", line)
 
     def test_typing_before_the_enter_records_a_commit_decision(self):
+        """v2-w: no expiry — text since the last Enter means "this Enter commits".
+
+        A recency window (v2-v) was tried and reverted: it hijacked 変換確定 in
+        every window where the composition is invisible.
+        """
         self.app._decide(letter())
         with self.assertLogs(LOGGER, level="INFO") as logs:
             self.app._decide(enter(t_ms=1200))

@@ -286,8 +286,9 @@ def run(cfg: Config, emit: Callable[[str], None] = print,
          f"hold_window_ms={cfg.policy.hold_window_ms} "
          f"triple_enter_window_ms={cfg.policy.triple_enter_window_ms} "
          f"panic_key={cfg.policy.panic_key} panic_repeat={cfg.policy.panic_repeat} "
-         f"register_process={cfg.registration.process_key} "
-         f"register_process_title={cfg.registration.process_title_key}")
+         f"register_process={cfg.registration.process_key or '-'} "
+         f"register_process_title={cfg.registration.process_title_key or '-'} "
+         f"register_process_url={cfg.registration.process_url_key or '-'}")
     for warning in cfg.warnings:
         emit(f"DRYRUN-WARN {warning}")
     for line in sink_lines(cfg):
@@ -337,6 +338,16 @@ def preview_lines(cfg: Config) -> list[str]:
     return lines
 
 
+def _registration_line(cfg: Config) -> str:
+    """One line for --once; an unset (empty) registration key is simply absent."""
+    reg = cfg.registration
+    parts = [f"{combo} = {label}" for combo, label in
+             ((reg.process_key, "process only"),
+              (reg.process_title_key, "process + window title"),
+              (reg.process_url_key, "process + site (URL host)")) if combo]
+    return "registration: " + (", ".join(parts) if parts else "all unset")
+
+
 def once_report(cfg: Config, config_path: str, log_path: str = "") -> list[str]:
     """Human-readable startup report for --once (no hook, no injection)."""
     lines = [f"config: {config_path}",
@@ -347,8 +358,7 @@ def once_report(cfg: Config, config_path: str, log_path: str = "") -> list[str]:
              f"{cfg.policy.triple_enter_window_ms}, "
              f"trigger_cooldown_ms={cfg.policy.trigger_cooldown_ms})",
              f"panic_key: {cfg.policy.panic_key} x{cfg.policy.panic_repeat} (burst)",
-             f"registration: {cfg.registration.process_key} = process only, "
-             f"{cfg.registration.process_title_key} = process + window title",
+             _registration_line(cfg),
              f"profiles: {', '.join(p.id + ('' if p.enabled else '(disabled)') for p in cfg.profiles) or '-'}",
              f"warnings: {len(cfg.warnings)}"]
     lines += [f"  WARN {w}" for w in cfg.warnings]

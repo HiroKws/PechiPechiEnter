@@ -105,15 +105,21 @@ class RegistrationConfig:
     """Hotkeys that register the CURRENT foreground app as a profile (v2-g).
 
     Pressing one of these writes a new entry into the live config file, so the
-    two keymaps can be set up without hand-editing JSON: one registers the
+    keymaps can be set up without hand-editing JSON: one registers the
     process alone (every window of that exe), one registers process + window
-    title (just that window). Both are plain combo strings; validation requires
-    ``alt`` + F1..F24 so the keys cannot collide with the Enter policy or with
-    a shell shortcut.
+    title (just that window), one registers process + the browser SITE (v2-o:
+    the URL's host, so an SPA keeps matching while its path changes). All are
+    plain combo strings; validation requires ``alt`` + F1..F24 so the keys
+    cannot collide with the Enter policy or with a shell shortcut.
+
+    ``""`` means "this hotkey is unset" (v2-p): a settings field cleared by
+    hand must switch the key off, not fall back to a default the operator
+    thought they had removed. An omitted key still takes the default below.
     """
 
     process_key: str = "alt+f5"
     process_title_key: str = "alt+f6"
+    process_url_key: str = "alt+f7"
 
 
 @dataclass(frozen=True)
@@ -306,26 +312,38 @@ _FUNCTION_KEYS = frozenset(f"f{i}" for i in range(1, 25))
 
 
 def _parse_registration(raw: Any) -> RegistrationConfig:
-    """registration.*: two alt+F-key combos that register the foreground app."""
+    """registration.*: three alt+F-key combos; "" = that hotkey is unset."""
     if raw is None:
         return RegistrationConfig()
     _require(isinstance(raw, dict), "registration must be an object")
-    unknown = set(raw) - {"process_key", "process_title_key"}
+    unknown = set(raw) - {"process_key", "process_title_key", "process_url_key"}
     _require(not unknown, f"registration: unknown keys: {sorted(unknown)}")
     kwargs: dict[str, str] = {}
-    for key in ("process_key", "process_title_key"):
+    for key in ("process_key", "process_title_key", "process_url_key"):
         if key not in raw:
             continue
-        combo = _norm_combo(str(raw[key]))
+        value = raw[key]
+        _require(isinstance(value, str),
+                 f"registration.{key} must be a combo string or \"\" (got {value!r})")
+        if not value.strip():
+            kwargs[key] = ""            # v2-p: empty field = the key is off
+            continue
+        try:
+            combo = _norm_combo(value)
+        except ConfigError as exc:
+            raise ConfigError(f"registration.{key}: {exc}") from None
         tokens = combo.split("+")
         _require(tokens[:-1] == ["alt"] and tokens[-1] in _FUNCTION_KEYS,
-                 f"registration.{key} must be alt+<F1..F24> (got {combo!r}): "
+                 f"registration.{key} must be alt+<F1..F24> or \"\" (got {combo!r}): "
                  "plain F-keys belong to the Enter policy"
                  + " and unmodified function keys must stay usable elsewhere")
         kwargs[key] = combo
     cfg = replace(RegistrationConfig(), **kwargs)
-    _require(cfg.process_key != cfg.process_title_key,
-             "registration.process_key and registration.process_title_key must differ")
+    # unset keys cannot collide with each other (two blanks are not a clash)
+    used = [c for c in (cfg.process_key, cfg.process_title_key, cfg.process_url_key) if c]
+    _require(len(set(used)) == len(used),
+             "registration.process_key / process_title_key / process_url_key "
+             "must all differ (an empty string = unset)")
     return cfg
 
 
@@ -499,7 +517,12 @@ def parse_config(raw: dict[str, Any]) -> Config:
                  f"policy.hold_mode must be one of {sorted(HOLD_MODES)} (got {hold_mode!r})")
         pol_kwargs["hold_mode"] = hold_mode
     if "panic_key" in pol_raw:
-        pol_kwargs["panic_key"] = _norm_combo(str(pol_raw["panic_key"]))
+        # name the field: an empty string here is the one combo the settings
+        # window must refuse (the registration keys allow "" = unset, v2-p)
+        try:
+            pol_kwargs["panic_key"] = _norm_combo(str(pol_raw["panic_key"]))
+        except ConfigError as exc:
+            raise ConfigError(f"policy.panic_key: {exc}") from None
     if "double_enter_window_ms" in pol_raw:
         warnings.append(
             "policy.double_enter_window_ms is obsolete in v2 and was ignored "

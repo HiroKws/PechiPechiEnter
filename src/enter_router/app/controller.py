@@ -51,6 +51,9 @@ class AppController(Protocol):
 
     def open_log_dir(self) -> None: ...
 
+    def take_notification_action(self) -> str:
+        """Tab name the last clicked balloon refers to ("" = just open settings)."""
+
     # -- additions for the settings UI (allowed by design.md §8) --------------
     def get_config_dict(self) -> dict:
         """Live config as a JSON-ready dict (the UI edits this, never re-invents it)."""

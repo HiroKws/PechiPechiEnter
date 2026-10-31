@@ -36,6 +36,18 @@ WM_GETTEXT = 0x000D
 SMTO_ABORTIFHUNG = 0x0002
 MAX_CAPTURE_CHARS = 8192
 
+#: Window classes whose ``WM_GETTEXT`` really is the control's OWN text.
+#:
+#: Measured (v2-q): in the Hermes desktop app (Electron) the focused HWND is
+#: ``Chrome_RenderWidgetHostHWND``, and ``WM_GETTEXT`` on it answers with the
+#: *document caption* — "Hermes", the window title — on every one of three
+#: captures, no matter how much was typed. Non-empty meant step 1 "won", so the
+#: chain never reached ``clipboard_select_copy`` and the clipboard received the
+#: app name instead of the input. Chromium/Electron and Firefox therefore have to
+#: fall through; ``Ctrl+A``/``Ctrl+C`` is the route that works there (design §5.4).
+_TEXT_CONTROL_CLASSES = ("edit", "richedit", "scintilla", "textbox", "textfield",
+                         "memo", "textedit")
+
 OBJID_CLIENT = 0xFFFFFFFC
 CHILDID_SELF = 0
 VT_I4 = 3
@@ -63,6 +75,8 @@ def _init_win32() -> None:
     proto = win32lib.proto
     proto("user32", "GetGUIThreadInfo", BOOL,
           (DWORD, ctypes.POINTER(GUITHREADINFO)))
+    proto("user32", "GetClassNameW", ctypes.c_int,
+          (win32lib.HWND, win32lib.LPWSTR, ctypes.c_int))
     proto("user32", "SendMessageTimeoutW", win32lib.LRESULT,
           (win32lib.HWND, win32lib.UINT, win32lib.WPARAM, ctypes.c_void_p,
            win32lib.UINT, win32lib.UINT, ctypes.POINTER(win32lib.ULONG_PTR)))
@@ -114,12 +128,39 @@ def focused_hwnd() -> int:
         return 0
 
 
+def looks_like_text_control(class_name: str | None) -> bool:
+    """True when ``WM_GETTEXT`` on this window class is the control's own text.
+
+    Pure, so the rule is testable off-Windows. See ``_TEXT_CONTROL_CLASSES`` for
+    the measured Electron case this guards against.
+    """
+    low = (class_name or "").lower()
+    return any(hint in low for hint in _TEXT_CONTROL_CLASSES)
+
+
+def _class_name(hwnd: int) -> str:
+    try:
+        buf = ctypes.create_unicode_buffer(256)
+        n = win32lib.dll("user32").GetClassNameW(win32lib.HWND(hwnd), buf, 256)
+        return buf.value if n else ""
+    except OSError:
+        return ""
+
+
 def read_focused_text() -> str | None:
-    """uia_focused step. None on any failure/ambiguity; never raises."""
+    """uia_focused step. None on any failure/ambiguity; never raises.
+
+    Only text controls are asked: for a Chromium/Electron render widget the
+    answer is the document caption, which is not the user's text (v2-q).
+    """
     try:
         _init_win32()
         hwnd = focused_hwnd()
         if not hwnd:
+            return None
+        cls = _class_name(hwnd)
+        if not looks_like_text_control(cls):
+            log.debug("uia_focused skipped class=%r (not a text control)", cls)
             return None
         u = win32lib.dll("user32")
         buf = ctypes.create_unicode_buffer(MAX_CAPTURE_CHARS)

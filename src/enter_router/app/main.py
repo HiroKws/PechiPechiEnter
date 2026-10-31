@@ -33,9 +33,10 @@ from pathlib import Path
 from enter_router import __version__
 from enter_router.app import config_watcher, dryrun, logsetup, supervisor, watchdog
 from enter_router.app.controller import RouterStatus
-from enter_router.app.fgcache import ForegroundCache
+from enter_router.app.fgcache import BROWSER_PROCESSES, ForegroundCache
 from enter_router.app.ime_unknown import ImeUnknownReporter
 from enter_router.app.sink_runner import SinkJob, SinkWorker
+from enter_router.core import browser_url
 from enter_router.core import keys as keys_mod
 from enter_router.core import routing
 from enter_router.core.config import (Config, ConfigError, default_config_dict,
@@ -184,9 +185,10 @@ class EnterRouterApp:
 
         self._fg = ForegroundCache()
 
-        def notify(title: str, body: str, level: str = "info") -> None:
+        def notify(title: str, body: str, level: str = "info",
+                   action: str = "") -> None:
             from enter_router.platform import notify_win
-            notify_win.notify(title, body, level)  # type: ignore[arg-type]
+            notify_win.notify(title, body, level, action)  # type: ignore[arg-type]
 
         self._notify = notify
         # "ime_state=unknown" must never be silent (card t_dd246e5a): one
@@ -287,6 +289,12 @@ class EnterRouterApp:
                     # consequence. Text since the last Enter => this Enter ends a
                     # composition (a commit: hand it to the IME, never count it).
                     # No text => nothing to commit, so it is an ordinary Enter.
+                    #
+                    # v2-w: this proxy has NO expiry. Adding one (v2-v, a 250ms
+                    # "recency" window) broke 変換確定 — every Enter later than the
+                    # window was hijacked and replaced by a synthetic shift+enter,
+                    # which the IME does not treat as a commit. Do not "fix" the
+                    # send-after-typing case here without a real composition signal.
                     same_window = hwnd == self._ime_text_hwnd
                     commit = same_window and self._ime_text_count > 0
                     if not commit:
@@ -297,8 +305,8 @@ class EnterRouterApp:
                     # a live か composition in an Edge window still reports
                     # "composition=0"), so this heuristic is the only signal that
                     # decides commit-vs-hijack. When "Enter stopped committing" is
-                    # reported, these four numbers ARE the evidence — DEBUG left
-                    # nothing to look at.
+                    # reported, these numbers ARE the evidence — DEBUG left nothing
+                    # to look at.
                     log.info("ime_unobservable profile=%s commit=%d text_count=%d "
                              "same_window=%d source=%s",
                              self._foreground_profile_id() or "-", int(commit),
@@ -382,18 +390,31 @@ class EnterRouterApp:
 
     # -- registration hotkeys (v2-g) ---------------------------------------
     def _registration_kind(self, ev: KeyEvent) -> str | None:
-        """"process" / "process_title" when this event is a registration hotkey."""
+        """"process" / "process_title" / "process_url" for a registration key."""
         if ev.kind != "down" or ev.injected:
             return None
         combo = keys_mod.combo_of(ev.vk, ev.ctrl, ev.alt, ev.shift, ev.win)
         if not combo:
             return None
         reg = self._cfg.registration
-        if keys_mod.same_combo(combo, reg.process_key):
-            return "process"
-        if keys_mod.same_combo(combo, reg.process_title_key):
-            return "process_title"
-        return None
+        # "" = the hotkey is unset (v2-p); an unset key must stay a normal key
+        kind = None
+        if reg.process_key and keys_mod.same_combo(combo, reg.process_key):
+            kind = "process"
+        elif reg.process_title_key and keys_mod.same_combo(combo, reg.process_title_key):
+            kind = "process_title"
+        elif reg.process_url_key and keys_mod.same_combo(combo, reg.process_url_key):
+            kind = "process_url"
+        if kind is not None:
+            log.info("registration key %s -> %s", combo, kind)
+        elif combo.startswith("alt+f"):
+            # An Alt+F-key that matches nothing: without this line "I pressed the
+            # registration key and nothing happened" has no evidence at all
+            # (unbound keys are passed through silently by design).
+            log.info("alt+F key %s is not bound to a registration action "
+                     "(process=%r title=%r url=%r)", combo, reg.process_key,
+                     reg.process_title_key, reg.process_url_key)
+        return kind
 
     def _register_foreground(self, kind: str, t_ms: int) -> None:
         """Write a profile for the CURRENT foreground app into the live config.
@@ -402,6 +423,12 @@ class EnterRouterApp:
         user was typing lands in the app, not after the config write. The write
         goes through ``save_config_dict`` — the same validated, atomic path the
         settings window uses — so an invalid document can never reach the file.
+
+        ``kind == "process_url"`` never reads the URL here: this runs on the hook
+        thread and the MSAA walk costs hundreds of ms. The foreground poller
+        (``app/fgcache.py``) owns that value; when it has not produced one yet the
+        registration is finished by a short-lived worker (v2-r) instead of asking
+        the operator to press the key a second time.
         """
         try:
             with self._lock:
@@ -422,55 +449,104 @@ class EnterRouterApp:
                 self._notify("enter-router", "登録できませんでした（ウィンドウタイトルが空です）",
                              "warning")
                 return
-
-            doc = self._config_dict_from_disk() or self.get_config_dict()
-            profiles = doc.setdefault("profiles", [])
-            wanted_title = routing.literal_glob(title) if title else None
-            for existing in profiles:
-                match = existing.get("match") or {}
-                # A duplicate is the SAME rule: same exe, same title condition and
-                # no URL condition. site-a (firefox + a URL glob) is NOT the same
-                # rule as "every firefox window", so it must not block the write.
-                if ((match.get("process") or "").lower() == process
-                        and (match.get("title") or None) == wanted_title
-                        and (match.get("url") or None) is None):
-                    log.info("register: already defined profile=%s process=%s",
-                             existing.get("id"), process)
-                    self._notify("enter-router",
-                                 f"既に登録済みです: {existing.get('id')}", "info")
-                    return
-
-            stem = process[:-4] if process.endswith(".exe") else process
-            base_id = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in stem) or "app"
-            used = {str(p.get("id")) for p in profiles}
-            pid, n = base_id, 1
-            while pid in used:
-                n += 1
-                pid = f"{base_id}-{n}"
-            profile = {
-                "id": pid,
-                "enabled": True,
-                # chat convention by default; the user can edit it afterwards
-                "match": {"process": process,
-                          **({"title": wanted_title} if wanted_title else {})},
-                "keymap": {"send": "enter", "newline": "shift+enter"},
-            }
-            profiles.append(profile)
-            ok, message = self.save_config_dict(doc)
-            if not ok:
-                log.error("register failed: %s", message)
-                self._notify("enter-router", f"登録できませんでした: {message}", "warning")
+            if kind == "process_url":
+                self._register_site(process, fg.url)
                 return
-            what = f"{process}" + (f" / {title}" if title else "")
-            log.info("registered profile=%s match=%s config=%s", pid,
-                     profile["match"], self._config_path)
-            self._notify("enter-router",
-                         f"登録しました: {pid} ({what}) → {os.path.basename(self._config_path)}",
-                         "info")
+            self._write_registration(process, title, None, None)
         except BaseException:
             # fail-open: the key is swallowed either way, but the tool must live
             log.exception("registration failed")
             self._last_error = "registration failed"
+
+    def _register_site(self, process: str, url: str | None,
+                       wait: bool = True) -> None:
+        """process + site; waits for the poller when the URL is not read yet."""
+        url_glob = browser_url.host_glob(url) if url else None
+        if url_glob:
+            self._write_registration(process, None, browser_url.url_host(url), url_glob)
+            return
+        if process not in BROWSER_PROCESSES:
+            log.warning("register: no URL available for %s (not a browser)", process)
+            self._notify("enter-router",
+                         "登録できませんでした（URL はブラウザでのみ読めます）", "warning")
+            return
+        if not wait:
+            log.warning("register: URL never became readable for %s", process)
+            self._notify("enter-router", "登録できませんでした（URL を読めませんでした）",
+                         "warning")
+            return
+        log.info("register: URL not read yet for %s; finishing in the background",
+                 process)
+        self._notify("enter-router", "URL を読み直しています（そのまま数秒お待ちください）",
+                     "info")
+        threading.Thread(target=self._await_site_url, args=(process,),
+                         name="register-site", daemon=True).start()
+
+    def _await_site_url(self, process: str, timeout_s: float = 3.0) -> None:
+        """Worker thread: let the poller catch up, then register or report."""
+        try:
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                _hwnd, fg = self._fg.snapshot()
+                now = routing.base_name((fg.process_name or "")).lower()
+                if now == process and fg.url:
+                    self._register_site(process, fg.url, wait=False)
+                    return
+                time.sleep(0.1)
+            self._register_site(process, None, wait=False)
+        except BaseException:
+            log.exception("background site registration failed")
+            self._last_error = "registration failed"
+
+    def _write_registration(self, process: str, title: str | None,
+                            host: str | None, url_glob: str | None) -> None:
+        """Append the profile to the file on disk and apply it immediately."""
+        doc = self._config_dict_from_disk() or self.get_config_dict()
+        profiles = doc.setdefault("profiles", [])
+        wanted_title = routing.literal_glob(title) if title else None
+        for existing in profiles:
+            match = existing.get("match") or {}
+            # A duplicate is the SAME rule: same exe, same title condition and
+            # same URL condition. site-a (firefox + a URL glob) is NOT the same
+            # rule as "every firefox window", so it must not block the write.
+            if ((match.get("process") or "").lower() == process
+                    and (match.get("title") or None) == wanted_title
+                    and (match.get("url") or None) == url_glob):
+                log.info("register: already defined profile=%s process=%s",
+                         existing.get("id"), process)
+                self._notify("enter-router",
+                             f"既に登録済みです: {existing.get('id')}", "info")
+                return
+
+        # "claude.ai" reads better than "firefox-3" as a profile id
+        stem = host or (process[:-4] if process.endswith(".exe") else process)
+        base_id = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in stem) or "app"
+        used = {str(p.get("id")) for p in profiles}
+        pid, n = base_id, 1
+        while pid in used:
+            n += 1
+            pid = f"{base_id}-{n}"
+        profile = {
+            "id": pid,
+            "enabled": True,
+            # chat convention by default; the user can edit it afterwards
+            "match": {"process": process,
+                      **({"title": wanted_title} if wanted_title else {}),
+                      **({"url": url_glob} if url_glob else {})},
+            "keymap": {"send": "enter", "newline": "shift+enter"},
+        }
+        profiles.append(profile)
+        ok, message = self.save_config_dict(doc)
+        if not ok:
+            log.error("register failed: %s", message)
+            self._notify("enter-router", f"登録できませんでした: {message}", "warning")
+            return
+        what = " / ".join(x for x in (process, title, url_glob) if x)
+        log.info("registered profile=%s match=%s config=%s", pid,
+                 profile["match"], self._config_path)
+        self._notify("enter-router",
+                     f"登録しました: {pid} ({what}) → {os.path.basename(self._config_path)}",
+                     "info", action=f"profiles:{pid}")
 
     # -- injection routing -------------------------------------------------
     def _on_hook_thread(self) -> bool:
@@ -1031,6 +1107,20 @@ class EnterRouterApp:
         return True, "saved"
 
     # -- AppController ----------------------------------------------------
+    def take_notification_action(self) -> str:
+        """Where the last clicked balloon wants the settings window to land (v2-s).
+
+        The tray only reports "the operator clicked a balloon"; the mapping from
+        a notification to a UI place belongs to whoever posted it, so it comes
+        from ``platform/notify_win`` through here (ui/ never imports platform/).
+        """
+        from enter_router.platform import notify_win
+        try:
+            return notify_win.take_click_action()
+        except BaseException:
+            log.debug("take_click_action failed", exc_info=True)
+            return ""
+
     def get_status(self) -> RouterStatus:
         with self._lock:
             state = self._state

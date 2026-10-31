@@ -17,6 +17,15 @@
 | v2-g | オペレータ注記「パニックはコンビネーションでは緊急時に思い出せない／売っている余裕がない。F1 連打にして。あと alt+ファンクションで前面プロセスを登録したい」 | **パニック停止をコードから連打へ**: `panic_key`(既定 `f1`) を `panic_repeat`(既定 3, 2〜6) 回、`triple_enter_window_ms`(250) 以内に叩くと停止（`rule1`。押した F1 自体は素通しなので単発 F1 は従来どおり）。F12 は機種によって無い/位置が違うため既定から外した。**登録キー**を新設（`registration.process_key`=既定 `alt+f5` / `registration.process_title_key`=既定 `alt+f6`、**alt+F1〜F24 のみ**許可）: 押した瞬間の前面アプリを **プロファイルとして設定ファイルへ追記**し、その場で適用（プロセスのみ / プロセス＋ウィンドウタイトル。タイトルは**リテラル**として glob エスケープ）。使用する F キーは設定（JSON / 設定画面タブ A）で変更可 |
 | v2-f | オペレータ注記「2 連打が動かない」「窓は実測で決めろ」「4 連打以上はキャンセル」 | **窓を実測で確定: `hold_window_ms` = `triple_enter_window_ms` = 250ms**（連続 24 サンプル 96〜201ms / 非連続 5 サンプル 495〜585ms。`docs/measurements.md`、計算は `core/calibrate.py`、計測器は `scripts/measure_enter.py`）。v2-e の「一般的な 2 連打は 200〜350ms」という一般論の根拠を実測に置換。**3 発目は 250ms 保留してから発火**し、**4 発目が来たら連続打鍵ごとキャンセル**（改行・送信・hermes を出さず、入力欄のテキストは保持。§3.4 の CANCELLED）。あわせて**どのアプリでも動く既定設定 `config/chat-default.config.json`**（catch-all プロファイル）を追加。実機 E2E で判明した 2 件も同時に修正: **(a) キャンセルとクリップボード退避の成功は通知しない**（軽い操作にトーストは合わない。ログのみ）、**(b) `clipboard_select_copy` の後に `Right` を注入して選択を解除**（Ctrl+A の選択が残ると次の入力が上書きされる）、**(c) `GUITHREADINFO` を `win32lib` に一本化**（2 モジュールが別々に `GetGUIThreadInfo` の prototype を登録し、後勝ちで片方が `ArgumentError` になっていた＝実測で uia_focused 取得が毎回失敗していた） |
 | v2-e | オペレータ注記「保留窓 250ms は人間の 2 連打に厳しい」「メモ帳で試せない」 | **既定 `hold_window_ms` を 250 → 350**（`triple_enter_window_ms` と範囲 120〜600 は不変）。根拠: 一般的な 2 連打間隔は 200〜350ms で、250ms は意識しないと成立しない。あわせて**メモ帳用の実機テスト設定 `config/notepad-qa.config.json`** を追加（未定義アプリは `pass`＝素通しのため、サンプルだけではメモ帳で何も起きない） |
+| v2-o | オペレータ注記「前面のプロセスとウィンドウタイトルは取れている。プロセスと **URL** を取れるようにできないか（Edge / Firefox / Chrome で）」 | **登録キーに URL（サイト）版を追加**（`registration.process_url_key`=既定 `alt+f7`）: 前面ブラウザの**アクティブタブの URL** から**ホストのみ**を取り、`match.url` を **`*://<host>*`** として追記する（例 `https://claude.ai/chat/<id>` → `{"process": "firefox.exe", "url": "*://claude.ai*"}`、id は `claude-ai`）。パスは入れない（SPA は `/chat/<uuid>` が毎回変わるため。v2-g の「タイトル完全一致は Web アプリで壊れる」と同じ理由）。URL は**既存のフォアグラウンドポーラ（`app/fgcache.py` → `platform/textcap_win.get_document_url`）が読んだ値だけ**を使い、登録ハンドラ（フック thread）から MSAA を叩き直さない。未取得なら「もう一度押してください」と通知して**書かない**（推測で別サイトを掴まない） |
+| v2-p | オペレータ注記「ALT+ファンクションキーの設定は空欄＝未設定を許してね」 | **登録キーは空欄（`""`）を許可**し、その場合はその登録キーを**無効**にする（`_registration_kind` は空コンボを照合しないので、そのキーはアプリへ素通し）。空欄同士は衝突と見なさない（重複判定は非空のみ）。項目自体を書かなければ従来どおり既定値（`alt+f5`/`alt+f6`/`alt+f7`）。設定画面は空欄をそのまま `""` として保存する（以前は空欄を「変更しない」と解釈していたため、消したつもりのキーが生き続けた）。パニックキーは必須のまま（空欄は保存時にエラー） |
+| v2-q | オペレータ注記「設定で3連打をクリップボードへコピーに変更してテストしているけど、コピーされない」 | **`uia_focused` をテキスト入力系のウィンドウクラスに限定**（`platform/textcap_win.looks_like_text_control`）。実測: Hermes デスクトップ（Electron）ではフォーカス窓が `Chrome_RenderWidgetHostHWND` で、`WM_GETTEXT` が**文書キャプション＝ウィンドウタイトル "Hermes"** を返す。非空なので 1 段目が「成功」し、2 段目 `clipboard_select_copy` に落ちず、クリップボードには入力中の本文ではなくアプリ名が入っていた（ログ `capture step=uia_focused ok=True len=6` が 3 回連続、直後のクリップボードが `Hermes`）。クラスで弾くことで Chromium/Electron/Firefox は設計どおり Ctrl+A → Ctrl+C 経路に落ちる |
+| v2-r | オペレータ注記「Firefox でプロセス＋URL の登録キーを試したけど、URL が入力されない」 | **URL 未取得でも「押し直し」を要求しない**。登録キー押下時に `fg.url` がまだ `None` のときは、ワーカー（最大 3 秒・100ms 間隔）がフォアグラウンドポーラの値を見て、取れた時点で登録を完了する（`_await_site_url`）。取れないままなら「URL を読めませんでした」で**何も書かない**。ブラウザ以外なら「URL はブラウザでのみ読めます」と理由を出す。あわせて**証跡を追加**: 登録キー押下を `registration key alt+f3 -> process_url` として INFO に残し、割当の無い `alt+fN` は `alt+F key ... is not bound ...` として INFO に残す（未割当キーは仕様どおり素通しでログが無く、「押したのに何も起きない」を後から追えなかった） |
+| v2-s | オペレータ注記「登録したときに通知が出る。その通知をクリックしたら、設定ページのプロファイルタブを表示して」 | **通知クリックで行き先を開く**。`platform/notify_win.notify(..., action="profiles")` が最後の 1 件の行き先を保持し、トレイのコールバックに `NIN_BALLOONUSERCLICK`(0x0405) が来たら `balloon` コマンド → `AppController.take_notification_action()` で行き先を取り、`SettingsWindow.select_tab()` でタブ B を選ぶ。ui/ は platform/ を import しない（行き先はコントローラ経由）。行き先の無い通知はタブを選ばず設定画面を開くだけ。「登録しました」だけが `action="profiles"` を持つ |
+| v2-t | オペレータ注記「ついでに、今登録したアイテムへ焦点を合わせるようにして。今は、一番上のアイテムにあっている」 | **通知の行き先に「どのプロファイルか」を載せる**。action を `"profiles:<id>"` に拡張（`notify(...)` は文字列 1 本のまま）。`UiRuntime` は `partition(":")` でタブ名と id に分け、`open_settings(tab=, focus=)` → `SettingsWindow.select_profile(id)` が `ui/model.index_of_profile()` で**id から行を引き**、一覧の選択・`see()`（スクロール）・編集欄の読み込みまで行う。位置ではなく id で探すので、設定ファイルが並べ替わっても・外部書き込みで読み直しても正しい行に合う。id が見つからない場合は選択を変えない（行 0 へ落とさない） |
+| v2-u | オペレータ注記「あと、アプリのアイコン作って。何なら、gemini-flash使って良いので。画像専用モデルでもいいよ。でも、アイコンだから、そんなに高機能のモデルでなくても、出来るよね」→「だから、画像専用モデルなんて使わなくても出来るじゃん。こうなるから、言ったのに」 | **アイコンは画像生成モデルを使わず、コードで描く**（`scripts/make_icon.py`）。状態色（tray の `STATE_COLORS`＝COLORREF）と 16/20/24/32/40/48/64/128/256 の各サイズを、**そのサイズのピクセルグリッド上に直接描く**（縮小しない）。実測: 生成画像（1024px、gemini-2.5-flash-image）を縮小すると 16px で肘の穴が潰れ、線は 1〜2px の滲みになった。描画版は 16px でも「角を曲がって左へ抜ける矢印」として読め、肘の穴（2×3px）が残る。16px は線を 3px→2px に落として余白を確保。成果物: `src/enter_router/assets/enter-router.ico`（アプリ用・緑）と `tray-<state>.ico`（4 状態）。トレイは `ui/tray.py:_load_icon_file()` が `LoadImageW(LR_LOADFROMFILE)` で読み（無ければ従来の GDI 四角にフォールバック）、設定画面は `iconbitmap` で同じ .ico をタイトルバーに出す。**Pillow はアイコン生成スクリプトだけの依存**（常駐は .ico を読むだけで PIL を import しない＝設計の「実行時は追加パッケージ禁止」を維持） |
+| v2-v | オペレータ注記「Enterの単押しがフックされず、そのまま送信されている」「セッションへ変更したら直っているので、日本語入力と絡んでいるかも」 | **かな入力時の「確定」推定に鮮度条件を追加**（`policy.ime_commit_window_ms`＝250、`core.policy.assume_ime_commit`）。最後の文字キーから窓内の Enter だけを確定とみなす。ログに `age_ms=` を追加。**→ v2-w で撤回**（下記） |
+| v2-w | オペレータ注記「また日本語の確定ができなくなった。繰り返しているね。日本語の確定がEnterでできなくなると、操作がおかしくなる」 | **v2-v を撤回（全削除）**。実測: v2-v のビルドでは 08:48〜08:49 の Enter がすべて `decision=HOLD op=enter resolved=key:shift+enter` になり、注入は `shift+enter`（事件当時の注入は全件が `enter` / `shift+enter` のみで、`ctrl+v` や sink 実行は 1 件も無い）。つまり**確定 Enter を横取りして合成 `shift+enter` に置き換えると IME は確定しない**（変換中の文字列が残り、以後の操作が崩れる）。**合成が見えないアプリ（Electron/Firefox）で「確定」と「普通の Enter」を確実に区別する信号は存在しない**ので、鮮度（時間）で代用してはならない — 代用すると必ずどちらかが壊れる。確定を優先し、v2-h の期限なし代理指標に戻す。この判断は `app/main.py` の該当箇所にもコメントで残した |
 
 ---
 
@@ -291,8 +300,9 @@ EnterPolicyMachine(policy: PolicyConfig, resolver: Callable[[str], str])
 | トリガ後クールダウン | `trigger_cooldown_ms` | 500 | 0〜5000 | 二重発火の抑止 |
 | パニックキー | `panic_key` | **`f1`** | 任意のコンボ | 判定は rule0 の次に最優先。**連打で停止**（v2-g） |
 | パニック連打の回数 | `panic_repeat` | **3** | 2〜6 | 連打キー `panic_key` を窓内に何回で停止するか。窓は `triple_enter_window_ms` |
-| 登録キー（プロセスのみ） | `registration.process_key` | `alt+f5` | `alt+F1`〜`alt+F24` | 前面プロセスのプロファイルを追記（v2-g） |
-| 登録キー（プロセス＋タイトル） | `registration.process_title_key` | `alt+f6` | `alt+F1`〜`alt+F24` | 前面ウィンドウのタイトルも条件にしたプロファイルを追記 |
+| 登録キー（プロセスのみ） | `registration.process_key` | `alt+f5` | `alt+F1`〜`alt+F24` / 空欄 | 前面プロセスのプロファイルを追記（v2-g）。空欄 = 無効（v2-p） |
+| 登録キー（プロセス＋タイトル） | `registration.process_title_key` | `alt+f6` | `alt+F1`〜`alt+F24` / 空欄 | 前面ウィンドウのタイトルも条件にしたプロファイルを追記。空欄 = 無効 |
+| 登録キー（プロセス＋URL） | `registration.process_url_key` | `alt+f7` | `alt+F1`〜`alt+F24` / 空欄 | 前面ブラウザのサイト（URL のホスト）を条件にしたプロファイルを追記（v2-o）。空欄 = 無効 |
 | （安全）各閾値 | `safety.*` | §4.2 の通り | — | OS の LL フック解除上限 1000ms に収める |
 
 キーリピート: keyup を挟まない連続 Enter down は 1 扱い（OS リピート設定に非依存。research §2-d）。
@@ -391,7 +401,8 @@ DRYRUN t=<t_ms> op=<操作キー|-> meaning=<意味|-> profile=<profile_id|-> re
   },
   "registration": {
     "process_key": "alt+f5",
-    "process_title_key": "alt+f6"
+    "process_title_key": "alt+f6",
+    "process_url_key": "alt+f7"
   },
   "safety": {
     "callback_budget_warn_ms": 5,
@@ -488,20 +499,29 @@ DRYRUN t=<t_ms> op=<操作キー|-> meaning=<意味|-> profile=<profile_id|-> re
   - 値は `_norm_combo` 正規化。**`win+…` は ConfigError**（OS 予約）。
   - `send`/`newline` のどちらか欠落する keymap → **警告にプロファイル名と不足意味を列挙** +
     当該意味は `pass` にフォールバック（黙って埋めない）。
-- **登録キー（v2-g, `registration` セクション）**:
-  - `process_key` / `process_title_key` は `alt+<F1..F24>` のみ（`_norm_combo` 正規化後に検証）。
+- **登録キー（v2-g / v2-o, `registration` セクション）**:
+  - `process_key` / `process_title_key` / `process_url_key` は `alt+<F1..F24>` のみ（`_norm_combo` 正規化後に検証）か、
+    **空文字 `""` = 未設定**（v2-p）。
     それ以外は **ConfigError**（無修飾 F キーは Enter ポリシーの持ち物、`ctrl+…` は他アプリと衝突）。
-    2 つは同一値を許さない。
+    非空のもの同士は同一値を許さない（空欄は衝突と見なさない）。項目を省略すると既定値が入る。
+  - **空欄の登録キーは無効**＝そのキーは照合されず、アプリへそのまま渡る（`_registration_kind` が空コンボを
+    比較しない）。設定画面で欄を消して保存すれば、その登録キーは止まる。
   - 押すと**その瞬間の前面アプリ**を `profiles` へ**追記**し、`save_config_dict`（検証 → 原子的書き込み →
-    即時適用）で反映する。`id` は exe 名から作り、衝突時は `-2`, `-3`。keymap は `send=enter` /
-    `newline=shift+enter`（チャットの慣習。後から設定画面で編集可）。
+    即時適用）で反映する。`id` は exe 名（URL 登録ではホスト名）から作り、衝突時は `-2`, `-3`。
+    keymap は `send=enter` / `newline=shift+enter`（チャットの慣習。後から設定画面で編集可）。
   - `process_key` は `match.process` のみ。`process_title_key` は `match.title` も入れる。
     タイトルは**データであってパターンではない**ので `routing.literal_glob()` でエスケープする
     （`Report [draft]` が `Report d` に一致してしまう事故を防ぐ）。
-  - 重複判定は「同じ exe・同じ title 条件・url 条件なし」の 3 点一致。
-    （`site-a`（firefox + URL）は「firefox 全体」の登録を妨げない。）
+  - `process_url_key` は `match.url` に **`*://<host>*`** を入れる（`core/browser_url.host_glob()`）。
+    ホストは前方の `[` `*` `?` をエスケープしたうえで `*://` を前置する — 単純な `*claude.ai*` は
+    `notclaude.ai` にも一致してしまうため。パスは保存しない（SPA の `/chat/<uuid>` は毎回変わる）。
+    URL は `app/fgcache.py` が保持するスナップショット値のみを使い、**フック thread から MSAA を
+    叩き直さない**（1 ノード実測 2.5ms だが探索は 141 ノード・523ms）。未取得（`None`）なら
+    「もう一度押してください」と通知して**書かない** — 推測した URL で別サイトを掴む事故を防ぐ。
+  - 重複判定は「同じ exe・同じ title 条件・同じ url 条件」の 3 点一致。
+    （`site-a`（firefox + URL glob）は「firefox 全体」の登録を妨げない。）
   - 保留中の Enter は**登録より先に**フラッシュする（I6）。登録キー自体は抑止する。
-  - 失敗（前面プロセス/タイトルが読めない・保存が検証で落ちた）は**通知 + ログ**で可視化する。
+  - 失敗（前面プロセス/タイトル/URL が読めない・保存が検証で落ちた）は**通知 + ログ**で可視化する。
 - **照合（既存の 2 段走査を維持）**: ①specific（process≠`*` または title/url 指定）を書いた順、
   ②catch-all（`process:"*"` かつ title/url なし）を最後の受け皿。無効プロファイルは除外。
   **match_profile が None（どのプロファイルにも当たらない）＝未定義アプリ → 全操作 `pass`**（I8・誤爆防止）。
@@ -553,6 +573,8 @@ DRYRUN t=<t_ms> op=<操作キー|-> meaning=<意味|-> profile=<profile_id|-> re
   ツールが観測できるのは (a) IME のオン/オフ、(b) 変換モード（かな/英数）、
   (c) 前面プロセスの未確定窓（Electron では見えない）、(d) 直近の Enter 以降に文字キーを打ったか
   ＝ S2 の代理指標。(d) が真なら S2 とみなして確定として扱い、偽なら S1/S3/S4 として通常判定する。
+  **v2-v で「鮮度（時間窓）」を足そうとして v2-w で撤回した**: 合成が見えない以上、時間で代用すると
+  必ず確定か通常判定のどちらかが壊れる（確定を優先する）。
 - **かな入力中の Enter を「確定」と「普通の Enter」に分ける（v2-h・⑥ が unknown のとき）**:
   変換そのものが見えない以上、**結果**で判定する。Enter は必ず変換を終わらせるので、
   1. 直前の Enter 以降に**文字を生むキー**（英数字・記号・space・変換/無変換/かな/漢字）が押されている
@@ -715,7 +737,12 @@ class ISink(Protocol):
 ### 5.4 テキスト取得（capture chain）
 
 トリガ成立時のみ、そのアプリに入っているテキストを取得する:
-1. `uia_focused`: フォーカス要素の UIA 読み取り（ネイティブ Edit 等）。
+1. `uia_focused`: フォーカス要素の**ウィンドウクラスがテキスト入力系**（`Edit` / `RichEdit*` / `Scintilla` /
+   `*TextBox*` / `TMemo` など）のときだけ `WM_GETTEXT` で読む（v2-q）。ブラウザ・Electron の
+   フォーカス窓（`Chrome_RenderWidgetHostHWND` / `MozillaWindowClass`）では `WM_GETTEXT` が
+   **文書キャプション（＝ウィンドウタイトル）**を返すため、クラスで弾いて 2 段目へ落とす。
+   実測: Hermes デスクトップ（Electron）で 3 回とも「Hermes」を取得し、入力中の本文ではなくアプリ名が
+   クリップボードに入っていた。
 2. `clipboard_select_copy`: Ctrl+A → Ctrl+C をスタッシュに取り、**必ずクリップボードを復元**し、
    最後に **`Right` を 1 回注入して選択を解除**する（Ctrl+A の選択が残ると次の入力が上書きされる。v2-f の実機指摘）。
    Firefox は UIA で入力欄を特定できない（research R11）ため、この経路が現実解。
@@ -758,7 +785,19 @@ class ISink(Protocol):
 
 **S0 トレイアイコン（Shell_NotifyIcon）**
 - 状態色: 緑=有効 / 黄=一時停止 / 赤=パニック停止中 / 回転風=シンク実行中。
+- **アイコン（v2-u）**: `src/enter_router/assets/tray-<state>.ico` を `LoadImageW` で読む
+  （無ければ GDI で描いた四角にフォールバック）。.ico は `scripts/make_icon.py` が
+  **各サイズのピクセルグリッド上に直接描いて**生成する（画像生成モデルは使わない。
+  縮小すると 16px で潰れたため）。設定画面のタイトルバーにも同じ `enter-router.ico` を出す。
 - メニュー: 有効⇔一時停止 / 設定を開く / パニック停止（アンフック）/ ログを開く / 終了。
+- **通知（バルーン/トースト）のクリック（v2-s）**: `Shell_NotifyIcon` のコールバックに
+  `NIN_BALLOONUSERCLICK`(0x0405) が来たら `balloon` コマンドを UI へ送り、**その通知が指す場所**を開く。
+  通知を出した側が `notify(action="profiles")` で行き先（タブ名）を添え、`platform/notify_win` が
+  最後の 1 件だけ保持 → `AppController.take_notification_action()` で取り出す（ui/ は platform/ を import しない）。
+  「登録しました」は `action="profiles:<id>"`（`<id>` = 追記したプロファイルの id）なので、クリックで
+  設定画面のタブ B（プロファイル）が開き、**その行が選択されて編集欄に載る**（v2-t。
+  `select_profile()` は id から行を引くので、一覧の並びに依存しない）。
+  行き先を添えない通知（警告など）をクリックした場合はタブを選ばず設定画面を開くだけ。
 
 **S1 設定ウィンドウ（1 ウィンドウ・tkinter・3 タブ）**
 - **Tab A 操作マップ（第1層）**: 全 18 トリガ（enter / enter2 / enter3 / shift・ctrl・alt+enter /

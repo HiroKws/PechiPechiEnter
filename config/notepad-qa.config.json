@@ -34,7 +34,8 @@
   },
   "registration": {
     "process_key": "alt+f5",
-    "process_title_key": "alt+f6"
+    "process_title_key": "alt+f6",
+    "process_url_key": "alt+f7"
   },
   "safety": {
     "callback_budget_warn_ms": 5,

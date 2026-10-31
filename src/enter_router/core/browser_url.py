@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 # MSAA role / state constants (IAccessible::get_accRole / get_accState)
 ROLE_DOCUMENT = 0x0000000F
@@ -93,6 +94,52 @@ def page_title_of(window_title: str | None) -> str:
             title = title[: -len(suffix)].strip()
             break
     return title
+
+
+def _escape_glob(text: str) -> str:
+    """Escape glob metacharacters (a host is data, never a pattern)."""
+    out: list[str] = []
+    for ch in text:
+        out.append(f"[{ch}]" if ch in "*?[" else ch)
+    return "".join(out)
+
+
+def url_host(url: str | None) -> str | None:
+    """``'https://claude.ai/chat/<id>?x=1'`` -> ``'claude.ai'`` (or None).
+
+    The registration hotkey stores a SITE-scoped pattern, so only the
+    authority is needed: an SPA changes its path on every message
+    (``/chat/<uuid>``), and a literal there would stop matching the moment the
+    conversation is not the one it was registered on.
+    """
+    if not url:
+        return None
+    value = url.strip()
+    if not value:
+        return None
+    if not is_absolute_url(value):
+        if not is_trimmed_url(value):
+            return None
+        value = "https://" + value          # the address bar's displayed form
+    try:
+        netloc = urlsplit(value).netloc
+    except ValueError:
+        return None
+    host = netloc.rsplit("@", 1)[-1].strip()   # drop any userinfo
+    return host or None
+
+
+def host_glob(url: str | None) -> str | None:
+    """A site-scoped match pattern: ``'*://claude.ai*'`` (or None).
+
+    ``*://`` is what keeps this from scoping the wrong site: the plain
+    ``*claude.ai*`` form also matches ``notclaude.ai``. The trailing ``*``
+    covers the bare origin (``https://claude.ai``) and every path under it.
+    """
+    host = url_host(url)
+    if not host:
+        return None
+    return "*://" + _escape_glob(host) + "*"
 
 
 def select_document_url_node(nodes: list[AccNode] | tuple[AccNode, ...],

@@ -760,3 +760,4 @@ class EnterPolicyMachine:
         if delivered is not None:
             return delivered
         return self._out(Decision.IGNORE, False, reason="reconfigured")
+

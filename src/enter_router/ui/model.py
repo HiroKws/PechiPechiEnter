@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from enter_router.core import routing
-from enter_router.core.config import (COUNT_OPERATIONS, KEY_MEANINGS, ConfigError,
-                                      _norm_combo, parse_config)
+from enter_router.core.config import (COUNT_OPERATIONS, DEFAULT_CONFIG, KEY_MEANINGS,
+                                      ConfigError, _norm_combo, parse_config)
 
 # ---------------------------------------------------------------------------
 # vocabulary the window shows (Japanese). Order = the order on screen.
@@ -83,6 +83,7 @@ KEY_FIELDS: tuple[tuple[str, str], ...] = (
     ("policy.panic_key", "パニックキー（このキーの連打で停止）"),
     ("registration.process_key", "登録キー: プロセスのみ"),
     ("registration.process_title_key", "登録キー: プロセス＋ウィンドウタイトル"),
+    ("registration.process_url_key", "登録キー: プロセス＋URL（サイト）"),
 )
 
 #: What the settings window should do when the config file changed underneath it.
@@ -144,6 +145,7 @@ FIELD_LABELS: dict[str, str] = {
     "registration": "登録キー",
     "registration.process_key": "登録キー: プロセスのみ",
     "registration.process_title_key": "登録キー: プロセス＋ウィンドウタイトル",
+    "registration.process_url_key": "登録キー: プロセス＋URL（サイト）",
     "policy.enabled": "有効（enabled）",
     "policy": "ポリシー設定",
     "global.operations": "操作マップ（global.operations）",
@@ -382,6 +384,18 @@ class SettingsModel:
         section, _, key = path.partition(".")
         return self._data.get(section, {}).get(key, default)
 
+    def key_default(self, path: str) -> Any:
+        """The core default for a hotkey path.
+
+        A config file written before a key existed has no entry for it, so the
+        field would render blank and read as "unset" even though the core is
+        using the default. Showing the effective value is what the other two
+        registration keys already do (they are in every older file).
+        """
+        section, _, key = path.partition(".")
+        group = getattr(DEFAULT_CONFIG, section, None)
+        return getattr(group, key, "") if group is not None else ""
+
     def set_key(self, path: str, value: Any) -> None:
         section, _, key = path.partition(".")
         self._data.setdefault(section, {})[key] = value
@@ -392,6 +406,21 @@ class SettingsModel:
 
     def profile_ids(self) -> tuple[str, ...]:
         return tuple(str(p.get("id", "")) for p in self._data["profiles"])
+
+    def index_of_profile(self, profile_id: str) -> int | None:
+        """Row index of a profile id, or None (v2-t: focus the just-added one).
+
+        The registration hotkey knows the id it wrote; the list has to be found by
+        id, never by position (the file may have been reordered or reloaded).
+        """
+        wanted = (profile_id or "").strip()
+        if not wanted:
+            return None
+        ids = self.profile_ids()
+        try:
+            return ids.index(wanted)
+        except ValueError:
+            return None
 
     def profile(self, index: int) -> dict:
         return self._data["profiles"][index]

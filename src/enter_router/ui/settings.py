@@ -26,6 +26,7 @@ Non-negotiables encoded here
 """
 from __future__ import annotations
 
+import logging
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -40,8 +41,18 @@ from .model import (EXTERNAL_IGNORE, EXTERNAL_RELOAD, EXTERNAL_WARN, HOLD_MODE_L
                     issues_from_message,
                     normalize_combo)
 
+log = logging.getLogger("enter_router.ui.settings")
+
 WINDOW_TITLE = "enter-router 設定"
 UNSET_LABEL = "未設定（警告あり）"
+
+#: Tab names the rest of the app may ask for (v2-s: a clicked notification).
+#: Value = the attribute that holds the tab frame on SettingsWindow.
+TAB_BY_NAME: dict[str, str] = {
+    "operations": "tab_a", "map": "tab_a", "a": "tab_a",
+    "profiles": "tab_b", "b": "tab_b",
+    "test": "tab_c", "send": "tab_c", "c": "tab_c",
+}
 STATE_STYLE: dict[str, tuple[str, str]] = {
     # state -> (表示, 背景色)
     "running": ("有効", "#1f7a1f"),
@@ -86,6 +97,7 @@ class SettingsWindow:
 
         self.win = tk.Toplevel(master)
         self.win.title(WINDOW_TITLE)
+        self._set_window_icon()
         # No hardcoded geometry: the height comes from what the tabs need
         # (see _fit_to_content). A fixed 760px clipped the footer — 保存
         # disappeared — as soon as tab A's content grew past it.
@@ -98,6 +110,17 @@ class SettingsWindow:
         # The IME guarantee is checked, not just intended (raises on violation).
         ime_guard.assert_no_enter_submit(self.win)
         self.win.deiconify()
+
+    def _set_window_icon(self) -> None:
+        """Title-bar / alt-tab icon from the committed .ico (v2-u). Best effort."""
+        from .tray import ASSET_DIR
+        path = ASSET_DIR / "enter-router.ico"
+        if not path.exists():
+            return
+        try:
+            self.win.iconbitmap(default=str(path))
+        except Exception:                     # noqa: BLE001 - never block the window
+            log.debug("iconbitmap(%s) failed", path, exc_info=True)
 
     def _fit_to_content(self) -> None:
         """Size the window to its content, clamped to the screen.
@@ -226,8 +249,9 @@ class SettingsWindow:
             var.trace_add("write", lambda *_a: self._on_key_fields_changed())
             self.key_vars[path] = var
         ttk.Label(keys, style="Hint.TLabel",
-                  text="パニックは「パニックキーを panic_repeat 回連打」で停止。登録キーは "
-                       "alt+F1〜F24 のみ（押した瞬間の前面アプリを設定に追記）").grid(
+                  text="パニックは「パニックキーを panic_repeat 回連打」で停止"
+                       "（パニックキーは空にできません）。登録キーは alt+F1〜F24 のみ・"
+                       "空欄にするとその登録キーは無効（押した瞬間の前面アプリを設定に追記）").grid(
             row=len(KEY_FIELDS), column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         warn_frame = ttk.LabelFrame(self.tab_a, text="設定の警告（コアの検証結果をそのまま表示）",
@@ -388,15 +412,16 @@ class SettingsWindow:
         for key, var in self.number_vars.items():
             var.set(str(self.model.policy_value(key, "")))
         for path, var in self.key_vars.items():
-            var.set(str(self.model.key_value(path, "")))
+            var.set(str(self.model.key_value(path, self.model.key_default(path))))
 
     def _on_key_fields_changed(self) -> None:
         if self._loading:
             return
         for path, var in self.key_vars.items():
-            raw = var.get().strip()
-            if raw:
-                self.model.set_key(path, raw)
+            # Written even when empty (v2-p): clearing a registration field is
+            # how the operator switches that hotkey OFF ("unset"), so skipping
+            # blanks would silently keep the old key alive.
+            self.model.set_key(path, var.get().strip())
         # no preview: these are tool hotkeys, not Enter semantics. Core validates
         # and normalizes them on save (a bad combo is reported by field name).
 
@@ -751,6 +776,38 @@ class SettingsWindow:
     # ------------------------------------------------------------------
     # lifecycle
     # ------------------------------------------------------------------
+    def select_tab(self, name: str) -> bool:
+        """Show one notebook tab by name (v2-s: a clicked notification lands here).
+
+        Accepts the UI names below (and the notebook letters) so the app never has
+        to know a widget — it sends "profiles", not an index.
+        """
+        tab = TAB_BY_NAME.get((name or "").strip().lower())
+        if tab is None:
+            log.debug("select_tab: unknown tab %r", name)
+            return False
+        self.notebook.select(getattr(self, tab))
+        return True
+
+    def select_profile(self, profile_id: str) -> bool:
+        """Highlight one profile by id and load its editor (v2-t).
+
+        Used when a notification click says *which* item the operator just made:
+        without it the list fell back to row 0 ("一番上"), which is a different
+        profile than the one the toast was about.
+        """
+        index = self.model.index_of_profile(profile_id)
+        if index is None:
+            log.debug("select_profile: %r is not in the list", profile_id)
+            return False
+        self._profile_index = index
+        self.profile_list.selection_clear(0, "end")
+        self.profile_list.selection_set(index)
+        self.profile_list.activate(index)
+        self.profile_list.see(index)          # scroll it into view
+        self._load_profile_editor(index)
+        return True
+
     def focus(self) -> None:
         self.win.deiconify()
         self.win.lift()

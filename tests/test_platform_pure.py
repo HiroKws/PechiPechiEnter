@@ -25,7 +25,7 @@ from enter_router.core import config as cfg_mod  # noqa: E402
 from enter_router.core import routing  # noqa: E402
 from enter_router.core.config import HermesSinkConfig, parse_config_text  # noqa: E402
 from enter_router.core.events import ForegroundInfo, ImeState  # noqa: E402
-from enter_router.platform import hermes_cli, inject  # noqa: E402
+from enter_router.platform import hermes_cli, inject, notify_win, textcap_win  # noqa: E402
 
 SAMPLE = REPO / "config" / "sample.config.json"
 ENTER, CTRL, SHIFT = 0x0D, 0x11, 0x10
@@ -467,6 +467,42 @@ class TestDryRun(unittest.TestCase):
 def cfg_required() -> dict:
     import json
     return json.loads(SAMPLE.read_text(encoding="utf-8"))
+
+
+class CaptureClassGateTests(unittest.TestCase):
+    """v2-q: WM_GETTEXT is only a control's OWN text for real text controls.
+
+    Measured in the Hermes desktop app (Electron): the focused HWND is a
+    ``Chrome_RenderWidgetHostHWND`` and WM_GETTEXT answers with the document
+    caption — "Hermes", the window title — so the chain's first step "won" with
+    the app name on all three captures. Those classes must fall through to the
+    Ctrl+A/Ctrl+C route instead.
+    """
+
+    def test_native_text_controls_pass(self):
+        for cls in ("Edit", "RichEdit20W", "RICHEDIT50W", "RichEditD2DPT",
+                    "Scintilla", "TEdit", "TMemo",
+                    "WindowsForms10.EDIT.app.0.141b42a_r6_ad1"):
+            self.assertTrue(textcap_win.looks_like_text_control(cls), cls)
+
+    def test_browser_and_electron_widgets_do_not(self):
+        for cls in ("Chrome_RenderWidgetHostHWND", "MozillaWindowClass",
+                    "Intermediate D3D Window", "Notepad", "", None):
+            self.assertFalse(textcap_win.looks_like_text_control(cls), cls)
+
+
+class NotificationActionTests(unittest.TestCase):
+    """v2-s: the toast remembers where a click on it should land."""
+
+    def test_the_last_notification_wins_and_is_consumed_once(self):
+        notify_win.notify("enter-router", "登録しました: x", "info", "profiles")
+        self.assertEqual(notify_win.take_click_action(), "profiles")
+        self.assertEqual(notify_win.take_click_action(), "")   # consumed
+
+    def test_an_ordinary_notification_clears_the_previous_action(self):
+        notify_win.notify("enter-router", "登録しました: x", "info", "profiles")
+        notify_win.notify("enter-router", "前の送信が処理中です", "warning")
+        self.assertEqual(notify_win.take_click_action(), "")
 
 
 if __name__ == "__main__":

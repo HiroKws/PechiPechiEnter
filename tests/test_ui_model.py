@@ -226,6 +226,79 @@ class ExternalConfigChangeTests(unittest.TestCase):
         self.assertEqual(model.external_config_change(True, 5.0, 6.0), model.EXTERNAL_WARN)
 
 
+class KeyFieldTests(unittest.TestCase):
+    """Tab A's hotkey fields (v2-o: the site-registration key is configurable too)."""
+
+    def test_the_site_registration_key_is_a_settings_field(self):
+        paths = [path for path, _label in m.KEY_FIELDS]
+        # tab A paints one row per KEY_FIELDS entry (panic key + the 3 registration keys)
+        self.assertEqual(paths, ["policy.panic_key", "registration.process_key",
+                                 "registration.process_title_key",
+                                 "registration.process_url_key"])
+        self.assertIn("registration.process_url_key", m.FIELD_LABELS)
+
+    def test_an_older_config_shows_the_effective_defaults(self):
+        """A file written before the key existed has no entry: show the default.
+
+        Otherwise the field renders blank and reads as "unset" while the core is
+        already using alt+f7.
+        """
+        model = fresh_model()
+        model._data["registration"].pop("process_url_key", None)
+        self.assertEqual(model.key_value("registration.process_url_key", ""), "")
+        self.assertEqual(model.key_default("registration.process_url_key"), "alt+f7")
+        self.assertEqual(model.key_default("policy.panic_key"), "f1")
+
+    def test_an_edited_site_key_round_trips_through_core_validation(self):
+        model = fresh_model()
+        model.set_key("registration.process_url_key", "Alt + F9")
+        data = model.to_dict()
+        cfg = parse_config(data)
+        self.assertEqual(cfg.registration.process_url_key, "alt+f9")
+
+    def test_a_colliding_site_key_is_rejected_by_core(self):
+        model = fresh_model()
+        model.set_key("registration.process_url_key", "alt+f5")   # = process_key
+        result = model.validate()
+        self.assertFalse(result.ok)
+        self.assertIn("登録キー", result.issues[0].label)
+
+    def test_a_cleared_field_unsets_the_key(self):
+        """v2-p: the window writes "" through, so core sees an unset hotkey."""
+        model = fresh_model()
+        model.set_key("registration.process_url_key", "")
+        self.assertTrue(model.validate().ok)
+        cfg = parse_config(model.to_dict())
+        self.assertEqual(cfg.registration.process_url_key, "")
+
+    def test_the_panic_key_may_not_be_cleared(self):
+        """Only the registration keys accept "": the burst stop needs a key."""
+        model = fresh_model()
+        model.set_key("policy.panic_key", "")
+        result = model.validate()
+        self.assertFalse(result.ok)
+        self.assertIn("パニックキー", result.issues[0].label)
+
+
+class ProfileFocusTests(unittest.TestCase):
+    """v2-t: a toast click focuses the profile it was about — by id, not by row."""
+
+    def test_finds_the_row_by_id(self):
+        self.assertEqual(fresh_model().index_of_profile("site-b"), 1)
+
+    def test_unknown_or_empty_id_has_no_row(self):
+        model = fresh_model()
+        self.assertIsNone(model.index_of_profile("nope"))
+        self.assertIsNone(model.index_of_profile(""))
+
+    def test_a_newly_added_profile_is_found_where_it_landed(self):
+        model = fresh_model()
+        index = model.add_profile()
+        pid = model.profile_ids()[index]
+        self.assertEqual(model.index_of_profile(pid), index)
+        self.assertEqual(index, len(model.profile_ids()) - 1)
+
+
 class PreviewTests(unittest.TestCase):
     def test_preview_resolves_the_second_layer_per_profile(self):
         lines = "\n".join(fresh_model().preview_lines())
