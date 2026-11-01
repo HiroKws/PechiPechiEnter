@@ -282,35 +282,30 @@ class EnterRouterApp:
                 self._ime_text_count += 1
             if ev.vk == VK_RETURN and ev.kind == "down":
                 from enter_router.platform import ime as ime_mod
+                from enter_router.platform import tsf_state as tsf_mod
                 hwnd = self._fg.hwnd()
                 ime = ime_mod.query_composition(hwnd)
-                if ime.composing is None and ime.source == "ime_native":
-                    # かな入力中: the composition cannot be seen, only its
-                    # consequence. Text since the last Enter => this Enter ends a
-                    # composition (a commit: hand it to the IME, never count it).
-                    # No text => nothing to commit, so it is an ordinary Enter.
-                    #
-                    # v2-w: this proxy has NO expiry. Adding one (v2-v, a 250ms
-                    # "recency" window) broke 変換確定 — every Enter later than the
-                    # window was hijacked and replaced by a synthetic shift+enter,
-                    # which the IME does not treat as a commit. Do not "fix" the
-                    # send-after-typing case here without a real composition signal.
-                    same_window = hwnd == self._ime_text_hwnd
-                    commit = same_window and self._ime_text_count > 0
-                    if not commit:
-                        ime = ImeState(composing=False, source="ime_native_idle",
-                                       detail=ime.detail)
-                    # INFO on purpose (v2-l follow-up): in Chromium/Electron and
-                    # Firefox the composition is NOT readable from outside (measured:
-                    # a live か composition in an Edge window still reports
-                    # "composition=0"), so this heuristic is the only signal that
-                    # decides commit-vs-hijack. When "Enter stopped committing" is
-                    # reported, these numbers ARE the evidence — DEBUG left nothing
-                    # to look at.
-                    log.info("ime_unobservable profile=%s commit=%d text_count=%d "
-                             "same_window=%d source=%s",
-                             self._foreground_profile_id() or "-", int(commit),
-                             self._ime_text_count, int(same_window), ime.source)
+                # TSF のテキストサービス（tsf/er_tip.cpp）が「未確定あり／なし」を
+                # 書いている。日本語入力と同じ層の観測なので、ここが読めれば推測は
+                # 一切しない:
+                #   True  = 日本語入力中 → 何もせず IME に渡す（数えない）
+                #   False = 確定後・未入力 → Enter の回数で振り分ける（通常判定）
+                #   None  = er_tip 未登録・対象外アプリ・記録が古い → 安全側に倒す
+                native = tsf_mod.composing(hwnd)
+                if native is not None:
+                    ime = ImeState(composing=native, source="tsf",
+                                   detail=f"er_tip composing={int(native)}")
+                    commit = native
+                    log.info("tsf_state profile=%s composing=%d (er_tip)",
+                             self._foreground_profile_id() or "-", int(native))
+                elif ime.composing is None and ime.source == "ime_native":
+                    # er_tip が無い環境での安全側: 日本語入力中かどうか読めない以上、
+                    # 何もせず IME に渡す（v2-y）。
+                    commit = True
+                    log.info("ime_passthrough profile=%s text_count=%d source=%s "
+                             "(no tsf state; conversion is the IME's)",
+                             self._foreground_profile_id() or "-",
+                             self._ime_text_count, ime.source)
                 elif ime.composing is None:
                     # Three-valued probe, the third answer is "I could not read
                     # it". Say so (log always, notification once) — the old code
