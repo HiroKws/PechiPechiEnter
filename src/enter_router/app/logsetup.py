@@ -23,6 +23,12 @@ from logging.handlers import RotatingFileHandler
 from enter_router.core.config import LoggingConfig
 
 LOGGER_NAME = "enter_router"
+#: Child logger for the per-event lines (decision=, inject=, sink_*, tsf_state).
+#: Setup raises this logger's level in "quiet" verbosity, so the call sites keep
+#: their plain ``log.info`` and nothing has to be conditionally wrapped (v3-a).
+#: A child of ``enter_router.app`` so a capture on that logger (tests,
+#: --dry-run) still sees the per-event lines.
+DECISION_LOGGER_NAME = LOGGER_NAME + ".app.decision"
 _FORMAT = "%(asctime)s %(levelname)-7s %(name)s %(message)s"
 
 #: Kept open for the process lifetime: faulthandler writes to the file object,
@@ -79,6 +85,20 @@ def _install_process_hooks(log_dir: str) -> None:
         _crash_file = None
 
 
+def resolve_verbosity(value: str) -> str:
+    """``auto`` -> quiet in a packaged build, full when running from source.
+
+    Switching on ``sys.frozen`` rather than asking the user is deliberate: the
+    person who installs the release gets the quiet log without configuring
+    anything, and the development checkout keeps the one-line-per-decision log
+    that the QA scripts and docs/development.md depend on (v3-a).
+    """
+    v = str(value or "auto").strip().lower()
+    if v != "auto":
+        return "quiet" if v == "quiet" else "full"
+    return "quiet" if getattr(sys, "frozen", False) else "full"
+
+
 def setup(cfg: LoggingConfig, appdata: str, console: bool = False) -> str:
     """Configure the 'enter_router' logger; returns the log file path."""
     log_dir = cfg.dir or os.path.join(appdata, "enter-router", "logs")
@@ -106,8 +126,13 @@ def setup(cfg: LoggingConfig, appdata: str, console: bool = False) -> str:
         stream.setFormatter(formatter)
         root.addHandler(stream)
 
-    root.info("logging started file=%s level=%s console=%s",
-              path, cfg.level, console)
+    verbosity = resolve_verbosity(cfg.verbosity)
+    decision = logging.getLogger(DECISION_LOGGER_NAME)
+    decision.setLevel(logging.INFO if verbosity == "full" else logging.WARNING)
+    decision.propagate = True          # rides on the root's file handler
+
+    root.info("logging started file=%s level=%s console=%s verbosity=%s",
+              path, cfg.level, console, verbosity)
     _install_process_hooks(log_dir)
     prune(log_dir)                     # keep the folder bounded across restarts
     return path

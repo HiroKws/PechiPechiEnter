@@ -658,5 +658,25 @@ class TestNotepadQaConfig(unittest.TestCase):
         self.assertTrue(all("resolved=pass" in ln for ln in undefined), undefined)
 
 
+class TestLoggingVerbosity(unittest.TestCase):
+    """v3-a: ``logging.verbosity`` decides how much the event log carries."""
+
+    def test_the_sample_declares_auto(self):
+        raw = sample_raw()
+        self.assertEqual(raw["logging"]["verbosity"], "auto")
+        self.assertEqual(parse_config_text(sample_text()).logging.verbosity, "auto")
+
+    def test_an_unknown_value_is_rejected(self):
+        raw = sample_raw()
+        raw["logging"]["verbosity"] = "loud"
+        with self.assertRaises(ConfigError):
+            parse_config(raw)
+
+    def test_a_missing_key_falls_back_to_auto(self):
+        raw = sample_raw()
+        del raw["logging"]["verbosity"]
+        self.assertEqual(parse_config(raw).logging.verbosity, "auto")
+
+
 if __name__ == "__main__":
     unittest.main()

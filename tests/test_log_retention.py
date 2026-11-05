@@ -16,6 +16,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from enter_router.app import logsetup  # noqa: E402
+from enter_router.core.config import LoggingConfig  # noqa: E402
 
 DAY = 86400.0
 
@@ -70,6 +71,73 @@ class PruneTests(unittest.TestCase):
 
     def test_a_missing_folder_is_not_an_error(self):
         self.assertEqual(logsetup.prune(os.path.join(self.dir, "nope")), [])
+
+
+class VerbosityTests(unittest.TestCase):
+    """v3-a: a packaged build keeps lifecycle + failures, not one line per key."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+
+    def tearDown(self):
+        # a RotatingFileHandler holds the file open on Windows, so close it
+        # before the temporary folder goes away, and leave the loggers clean.
+        import logging
+        root = logging.getLogger(logsetup.LOGGER_NAME)
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            handler.close()
+        logging.getLogger(logsetup.DECISION_LOGGER_NAME).setLevel(logging.NOTSET)
+        # faulthandler keeps crash.log open for the process lifetime
+        import faulthandler
+        if logsetup._crash_file is not None:
+            try:
+                faulthandler.disable()
+                logsetup._crash_file.close()
+            except (OSError, ValueError):
+                pass
+            logsetup._crash_file = None
+        self.tmp.cleanup()
+
+    def read_log(self):
+        with open(os.path.join(self.dir, "enter-router.log"), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_auto_is_quiet_in_a_packaged_build_and_full_from_source(self):
+        try:
+            logsetup.sys.frozen = True          # type: ignore[attr-defined]
+            self.assertEqual(logsetup.resolve_verbosity("auto"), "quiet")
+        finally:
+            del logsetup.sys.frozen             # type: ignore[attr-defined]
+        self.assertEqual(logsetup.resolve_verbosity("auto"), "full")
+
+    def test_an_explicit_value_wins_over_the_build_type(self):
+        try:
+            logsetup.sys.frozen = True          # type: ignore[attr-defined]
+            self.assertEqual(logsetup.resolve_verbosity("full"), "full")
+        finally:
+            del logsetup.sys.frozen             # type: ignore[attr-defined]
+        self.assertEqual(logsetup.resolve_verbosity("quiet"), "quiet")
+
+    def test_quiet_keeps_warnings_and_drops_the_per_key_lines(self):
+        import logging
+        logsetup.setup(LoggingConfig(verbosity="quiet", dir=self.dir), self.dir)
+        decision = logging.getLogger(logsetup.DECISION_LOGGER_NAME)
+        decision.info("decision=HOLD op=enter2 meaning=send state=HOLDING "
+                      "swallow=1 resolved=key:enter count=2 reason=hold_window")
+        decision.warning("sink_failed sink=hermes status=error failure=timeout")
+        text = self.read_log()
+        self.assertIn("sink_failed", text)
+        self.assertNotIn("decision=HOLD", text)
+
+    def test_full_keeps_the_per_key_lines(self):
+        import logging
+        logsetup.setup(LoggingConfig(verbosity="full", dir=self.dir), self.dir)
+        logging.getLogger(logsetup.DECISION_LOGGER_NAME).info(
+            "decision=DELIVER op=enter meaning=newline state=IDLE swallow=0 "
+            "resolved=pass count=1 reason=deadline")
+        self.assertIn("decision=DELIVER", self.read_log())
 
 
 if __name__ == "__main__":

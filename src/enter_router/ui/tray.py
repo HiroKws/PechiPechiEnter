@@ -43,7 +43,7 @@ WM_REFRESH = WM_APP + 2       # asked from another thread to repaint state
 WM_OPEN_SETTINGS = WM_APP + 4  # asked from ANOTHER PROCESS (main.py --settings)
 
 WINDOW_CLASS = "enter_router_tray_wnd"
-WINDOW_TITLE = "enter-router"
+WINDOW_TITLE = "ぺちぺちエンター"
 
 # --- Shell_NotifyIcon -----------------------------------------------------
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
@@ -110,7 +110,7 @@ def state_color(state: str) -> int:
 def status_tooltip(state: str, *, config_path: str = "", warnings: int = 0,
                    last_error: str = "") -> str:
     """Tooltip text (Shell_NotifyIcon szTip is 128 wide, keep it short)."""
-    lines = [f"enter-router — {state_text(state)}", STATE_DETAILS.get(state, "")]
+    lines = [f"ぺちぺちエンター — {state_text(state)}", STATE_DETAILS.get(state, "")]
     if config_path:
         lines.append(f"設定: {config_path}")
     if warnings:
@@ -376,7 +376,7 @@ class TrayIcon:
         self._icons: dict[str, int] = {}
         self._fallback_icon = 0
         self._state = "running"
-        self._tooltip = "enter-router"
+        self._tooltip = "ぺちぺちエンター"
         self._visible = False
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()

@@ -1,8 +1,29 @@
 @echo off
-setlocal
-set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+setlocal enabledelayedexpansion
 set "HERE=%~dp0"
 set "OUT=%HERE%build"
+
+rem --- find vcvarsall.bat -----------------------------------------------------
+rem Local machines often pin VS2019 BuildTools; CI runners have VS2022
+rem Enterprise. vswhere ships with the VS installer and finds either, so the
+rem path is no longer hard-coded (the hard-coded path is what made this script
+rem unusable in GitHub Actions). VCVARS_PATH overrides everything.
+set "VCVARS="
+if defined VCVARS_PATH set "VCVARS=%VCVARS_PATH%"
+if not defined VCVARS (
+  set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+  if exist "!VSWHERE!" (
+    for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+      if exist "%%i\VC\Auxiliary\Build\vcvarsall.bat" set "VCVARS=%%i\VC\Auxiliary\Build\vcvarsall.bat"
+    )
+  )
+)
+if not defined VCVARS set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvarsall.bat"
+if not exist "%VCVARS%" (
+  echo ERROR: vcvarsall.bat not found. Set VCVARS_PATH to your vcvarsall.bat.
+  exit /b 1
+)
+echo Using %VCVARS%
 if not exist "%OUT%" mkdir "%OUT%"
 if not exist "%OUT%\obj_x64" mkdir "%OUT%\obj_x64"
 if not exist "%OUT%\obj_x86" mkdir "%OUT%\obj_x86"

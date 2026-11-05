@@ -114,6 +114,10 @@ pythonw.exe <repo>\src\enter_router\main.py
   手元で試すなら `--config \\wsl.localhost\...\config\sample.config.json` でも可）。
 - ログ: `%APPDATA%\enter-router\logs\enter-router.log`（1MB x 3 でローテーション。
   **打鍵文字列・取得テキストはログに書かない**方針）。
+  **1 判定 1 行（`decision=…`）を出すのは `logging.verbosity` が `full` のときだけ**（v3-a）。
+  既定の `auto` は「凍結ビルドなら quiet（起動・終了・停止/再開・エラーだけ）、
+  ソースから起動したら full」。配布版に打鍵ごとの行を残さないための既定。
+  実装は子ロガー `enter_router.app.decision` のレベル切り替えで、呼び出し側は `dlog.info`。
 - 万が一キーが止められない場合の保険: **F1 を 3 回連打（パニック）で即アンフック**（`policy.panic_key` / `panic_repeat` で変更可）。
   コードを覚える必要がなく、片手で押せます（F12 は機種によって無い/位置が違うため既定から外しました）。
   保留中の Enter は**順序を保って 1 回だけ送出してから**アンフックし、以後は二度と再送しません
@@ -497,3 +501,56 @@ Firefox では常に `None` でした（＝URL 照合プロファイルは絶対
 3. シンク（`HermesSink` 等）の実行はフックスレッドではなくワーカースレッドで行う。
 4. `.ps1` は **ASCII のみ**で書く（PS 5.1 が BOM 無し UTF-8 を CP932 読みする実測バグ回避）。
 5. ログに打鍵・取得テキスト・クリップボード内容を書かない（privacy, research R9）。
+
+---
+
+## 配布物の作り方（v3-a）
+
+配布名は **ぺちぺちエンター / PechiPechiEnter**。表示名だけ日本語で、パス・レジストリ・
+共有メモリ名などの内部識別子は `enter-router` のまま（既存環境と衝突させないため）。
+
+### ローカルで全部作る
+
+```bat
+rem 1) TSF の観測部品（要 MSVC。vswhere で自動検出。VCVARS_PATH で上書き可）
+tsfuild.bat
+
+rem 2) exe（onedir・2 本）
+python packaging\make_version_info.py 1.0.0
+pyinstaller --noconfirm --clean packaging\PechiPechiEnter.spec
+
+rem 3) インストーラ（Inno Setup 6。per-user インストールなら
+rem    %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe）
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.0.0 packaging\PechiPechiEnter.iss
+```
+
+出来るもの:
+
+| パス | 中身 |
+|---|---|
+| `dist\PechiPechiEnter\PechiPechiEnter.exe` | 常駐（コンソール無し）。トレイ常駐・自動起動はこれ |
+| `dist\PechiPechiEnter\PechiPechiEnterCmd.exe` | 同じプログラムのコンソール版（`--once` / `--version` / `--dry-run`） |
+| `dist\PechiPechiEnter-Setup-<版>.exe` | インストーラ（管理者権限で TSF を登録） |
+
+### GitHub から出す
+
+`v*` タグを push すると `.github/workflows/release.yml` が
+exe → ポータブル zip → インストーラ → `SHA256SUMS.txt` を作り、Release に添付する。
+ランナーには Inno Setup 6 と VS2022（MSVC）が入っているので追加インストールは不要。
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+### 版の一致
+
+`--version`（exe）・インストーラ・タグの 3 つは一致させる。CI はビルド前にタグの値を
+`src/enter_router/__init__.py` の `__version__` へ書き込み、`/DMyAppVersion` も同じ値から渡す。
+手元で作るときは `make_version_info.py` の引数と `__version__` を揃えること。
+
+### 署名（していない）
+
+コード署名はしていない（無償配布）。そのため Smart App Control が有効な機体では
+**インストールできない**（未署名アプリを実行する手段が UI に無い）、SmartScreen の警告が出る、
+AV が誤検知することがある。README の「署名がないことによる注意」に利用者向けの説明がある。
+署名する場合の実費は年 100〜200 ドル（OV。EV は 2024 年以降 SmartScreen の即時回避にならない）。

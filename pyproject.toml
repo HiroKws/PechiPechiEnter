@@ -1,6 +1,6 @@
 [project]
 name = "enter-router"
-version = "0.1.0"
+version = "1.0.0"
 description = "Win11 resident tool: Enter policy routing (hook -> policy -> sinks). No build step; run from source."
 authors = [{ name = "Hirohisa Kawase", email = "hirokws@gmail.com" }]
 requires-python = ">=3.14"

@@ -484,7 +484,8 @@ DRYRUN t=<t_ms> op=<操作キー|-> meaning=<意味|-> profile=<profile_id|-> re
     "level": "INFO",
     "dir": null,
     "max_bytes": 1048576,
-    "backup_count": 3
+    "backup_count": 3,
+    "verbosity": "auto"
   }
 }
 ```

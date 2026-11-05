@@ -1,0 +1,2 @@
+config/sample.config.json text eol=lf
+docs/design.md text eol=lf

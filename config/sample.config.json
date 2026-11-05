@@ -116,6 +116,7 @@
     "level": "INFO",
     "dir": null,
     "max_bytes": 1048576,
-    "backup_count": 3
+    "backup_count": 3,
+    "verbosity": "auto"
   }
 }

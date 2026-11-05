@@ -32,7 +32,7 @@ from typing import Callable
 
 log = logging.getLogger("enter_router.ime")
 
-NOTIFY_TITLE = "enter-router: IME の状態を判定できません"
+NOTIFY_TITLE = "ぺちぺちエンター: 日本語入力の状態を判定できません"
 LOG_INTERVAL_MS = 60_000
 
 

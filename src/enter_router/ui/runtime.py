@@ -55,7 +55,7 @@ class UiRuntime:
         """Build the root + tray. Must be called from the main thread."""
         self.root = tk.Tk()
         self.root.withdraw()                       # hidden; only Toplevels show
-        self.root.title("enter-router")
+        self.root.title("ぺちぺちエンター")
         self.root.report_callback_exception = self._on_callback_error
         self._running = True
         if tray_available():

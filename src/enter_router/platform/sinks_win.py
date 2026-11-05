@@ -134,13 +134,13 @@ class ClipboardSink:
         try:
             if not self._put(text):
                 if notify:
-                    self._notify("enter-router", "クリップボードを確保できませんでした",
+                    self._notify("ぺちぺちエンター", "クリップボードを確保できませんでした",
                                  "warning")
                 log.error("sink=clipboard failure=clipboard_busy")
                 return SinkResult(sink=self.name, status="failed", failure="clipboard_busy",
                                   message="clipboard busy")
             if notify:
-                self._notify("enter-router",
+                self._notify("ぺちぺちエンター",
                              f"クリップボードに退避しました: "
                              f"{_preview(text, self._capture.preview_chars)}",
                              "info")
@@ -223,7 +223,7 @@ class AiChatSink:
         try:
             if not self._focus_guard(ctx.foreground):
                 log.error("sink=ai_chat failure=focus_failed")
-                self._notify("enter-router", "入力欄にフォーカスできませんでした", "warning")
+                self._notify("ぺちぺちエンター", "入力欄にフォーカスできませんでした", "warning")
                 return SinkResult(sink=self.name, status="failed", failure="focus_failed",
                                   message="target window is no longer focused")
             if self._cfg.method == "sendinput":
@@ -232,7 +232,7 @@ class AiChatSink:
                 sent = self._paste(text)     # one paste event (L2, research 2-c)
             if not sent:
                 log.error("sink=ai_chat failure=injected_blocked")
-                self._notify("enter-router", "入力が拒否されました（管理者権限のウィンドウ？）",
+                self._notify("ぺちぺちエンター", "入力が拒否されました（管理者権限のウィンドウ？）",
                              "warning")
                 return SinkResult(sink=self.name, status="failed", failure="injected_blocked",
                                   message="SendInput delivered no events (UIPI?)")

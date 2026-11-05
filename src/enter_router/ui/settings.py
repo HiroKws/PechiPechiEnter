@@ -43,7 +43,7 @@ from .model import (EXTERNAL_IGNORE, EXTERNAL_RELOAD, EXTERNAL_WARN, HOLD_MODE_L
 
 log = logging.getLogger("enter_router.ui.settings")
 
-WINDOW_TITLE = "enter-router 設定"
+WINDOW_TITLE = "ぺちぺちエンター 設定"
 UNSET_LABEL = "未設定（警告あり）"
 
 #: Tab names the rest of the app may ask for (v2-s: a clicked notification).
@@ -371,7 +371,7 @@ class SettingsWindow:
         self.test_sink_combo.grid(row=0, column=1, sticky="w", padx=(6, 12))
 
         ttk.Label(frame, text="サンプル文字列").grid(row=1, column=0, sticky="w")
-        self.test_text_var = tk.StringVar(value="enter-router のテスト送信です。")
+        self.test_text_var = tk.StringVar(value="ぺちぺちエンターのテスト送信です。")
         ttk.Entry(frame, textvariable=self.test_text_var, width=60).grid(
             row=1, column=1, columnspan=2, sticky="w", padx=(6, 0), pady=(4, 0))
 

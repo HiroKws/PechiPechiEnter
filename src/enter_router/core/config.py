@@ -195,12 +195,23 @@ class Profile:
     keymap: dict[str, str] = field(default_factory=dict)
 
 
+#: ``logging.verbosity`` (v3-a): what the *event* log carries.
+#:   full  — one line per decision / injection / sink (development, QA)
+#:   quiet — lifecycle + warnings + errors only (the shipped default)
+#:   auto  — quiet in a packaged build, full when run from source
+LOG_VERBOSITIES = frozenset({"auto", "full", "quiet"})
+
+
 @dataclass(frozen=True)
 class LoggingConfig:
     level: str = "INFO"
     dir: str | None = None     # None => %APPDATA%\\enter-router\\logs (resolved on Windows side)
     max_bytes: int = 1_048_576
     backup_count: int = 3
+    #: v3-a: a release build must not leave a per-keystroke trail. A key-by-key
+    #: log looks like a keylogger to anyone who opens the folder, and nobody
+    #: needs it except while diagnosing. "auto" = quiet when frozen.
+    verbosity: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -594,11 +605,15 @@ def parse_config(raw: dict[str, Any]) -> Config:
 
     log_raw = raw.get("logging", {}) or {}
     _require(isinstance(log_raw, dict), "logging must be an object")
+    verbosity = str(log_raw.get("verbosity", "auto")).strip().lower()
+    _require(verbosity in LOG_VERBOSITIES,
+             f"logging.verbosity must be one of {sorted(LOG_VERBOSITIES)} (got {verbosity!r})")
     logging_cfg = LoggingConfig(
         level=str(log_raw.get("level", "INFO")).upper(),
         dir=log_raw.get("dir"),
         max_bytes=int(log_raw.get("max_bytes", 1_048_576)),
         backup_count=int(log_raw.get("backup_count", 3)),
+        verbosity=verbosity,
     )
 
     return Config(

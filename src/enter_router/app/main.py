@@ -49,6 +49,10 @@ from enter_router.core.sinks import SinkContext, SinkResult
 from enter_router.platform.sinks_win import build_sinks
 
 log = logging.getLogger("enter_router.app")
+#: Per-event lines (one per decision/injection/sink). Silenced in a packaged
+#: build by logsetup (verbosity=quiet) so the shipped log is lifecycle + errors
+#: only (v3-a): a key-by-key trail reads like a keylogger to whoever opens it.
+dlog = logging.getLogger(logsetup.DECISION_LOGGER_NAME)
 
 EXIT_OK = 0
 EXIT_CONFIG = 2
@@ -257,7 +261,7 @@ class EnterRouterApp:
                 # processed. Answering before the lock also keeps the hook thread
                 # from ever waiting on a background thread's state lock while its
                 # own SendInput is being delivered (review round 1, item 2).
-                log.debug("injected passthrough vk=0x%02X %s", ev.vk, ev.kind)
+                dlog.debug("injected passthrough vk=0x%02X %s", ev.vk, ev.kind)
                 return False
             # I6 ordering (review round 2): a delivery another thread handed over
             # — the held Enter the timer thread released when its window expired —
@@ -296,13 +300,13 @@ class EnterRouterApp:
                     ime = ImeState(composing=native, source="tsf",
                                    detail=f"er_tip composing={int(native)}")
                     commit = native
-                    log.info("tsf_state profile=%s composing=%d (er_tip)",
+                    dlog.info("tsf_state profile=%s composing=%d (er_tip)",
                              self._foreground_profile_id() or "-", int(native))
                 elif ime.composing is None and ime.source == "ime_native":
                     # er_tip が無い環境での安全側: 日本語入力中かどうか読めない以上、
                     # 何もせず IME に渡す（v2-y）。
                     commit = True
-                    log.info("ime_passthrough profile=%s text_count=%d source=%s "
+                    dlog.info("ime_passthrough profile=%s text_count=%d source=%s "
                              "(no tsf state; conversion is the IME's)",
                              self._foreground_profile_id() or "-",
                              self._ime_text_count, ime.source)
@@ -316,7 +320,7 @@ class EnterRouterApp:
                     # Visible in the log on purpose: "did the router treat this
                     # Enter as a conversion commit, or did it take it?" is the
                     # question every future IME report starts with.
-                    log.info("ime_commit_enter text_count=%d "
+                    dlog.info("ime_commit_enter text_count=%d "
                              "(Enter handed to the IME, not counted)", self._ime_text_count)
                 if commit or ime.composing is True:
                     # The composition is over: whatever follows starts clean.
@@ -371,14 +375,14 @@ class EnterRouterApp:
             self._after_panic(out.reason)
         if out.decision is Decision.IGNORE and out.reason == "busy_drop":
             log.warning("sink_busy_drop resolved=%s", out.resolved)
-            self._notify("enter-router", "前の送信が処理中です（1 件破棄）", "warning")
+            self._notify("ぺちぺちエンター", "前の送信が処理中です（1 件破棄）", "warning")
         # A CANCEL is deliberately SILENT (no toast): cancelling a mistyped burst
         # is a light, frequent action and a notification per occurrence does not
         # fit it. The decision log line below is the record ("did it cancel or did
         # the key get lost?" is answered there, without a popup).
         if out.decision is not Decision.PASS:
             op = out.action or "-"
-            log.info("decision=%s op=%s meaning=%s state=%s swallow=%s resolved=%s "
+            dlog.info("decision=%s op=%s meaning=%s state=%s swallow=%s resolved=%s "
                      "count=%s reason=%s",
                      out.decision.name, op, self._meaning(op) or "-", out.state.name,
                      int(out.swallow), out.resolved or "-", out.count, out.reason)
@@ -435,13 +439,13 @@ class EnterRouterApp:
             process = routing.base_name((fg.process_name or "")).lower()
             if not process:
                 log.warning("register: no readable foreground process")
-                self._notify("enter-router", "登録できませんでした（前面のプロセスを読めません）",
+                self._notify("ぺちぺちエンター", "登録できませんでした（前面のプロセスを読めません）",
                              "warning")
                 return
             title = fg.window_title if kind == "process_title" else None
             if kind == "process_title" and not title:
                 log.warning("register: no window title for %s", process)
-                self._notify("enter-router", "登録できませんでした（ウィンドウタイトルが空です）",
+                self._notify("ぺちぺちエンター", "登録できませんでした（ウィンドウタイトルが空です）",
                              "warning")
                 return
             if kind == "process_url":
@@ -462,17 +466,17 @@ class EnterRouterApp:
             return
         if process not in BROWSER_PROCESSES:
             log.warning("register: no URL available for %s (not a browser)", process)
-            self._notify("enter-router",
+            self._notify("ぺちぺちエンター",
                          "登録できませんでした（URL はブラウザでのみ読めます）", "warning")
             return
         if not wait:
             log.warning("register: URL never became readable for %s", process)
-            self._notify("enter-router", "登録できませんでした（URL を読めませんでした）",
+            self._notify("ぺちぺちエンター", "登録できませんでした（URL を読めませんでした）",
                          "warning")
             return
         log.info("register: URL not read yet for %s; finishing in the background",
                  process)
-        self._notify("enter-router", "URL を読み直しています（そのまま数秒お待ちください）",
+        self._notify("ぺちぺちエンター", "URL を読み直しています（そのまま数秒お待ちください）",
                      "info")
         threading.Thread(target=self._await_site_url, args=(process,),
                          name="register-site", daemon=True).start()
@@ -509,7 +513,7 @@ class EnterRouterApp:
                     and (match.get("url") or None) == url_glob):
                 log.info("register: already defined profile=%s process=%s",
                          existing.get("id"), process)
-                self._notify("enter-router",
+                self._notify("ぺちぺちエンター",
                              f"既に登録済みです: {existing.get('id')}", "info")
                 return
 
@@ -534,12 +538,12 @@ class EnterRouterApp:
         ok, message = self.save_config_dict(doc)
         if not ok:
             log.error("register failed: %s", message)
-            self._notify("enter-router", f"登録できませんでした: {message}", "warning")
+            self._notify("ぺちぺちエンター", f"登録できませんでした: {message}", "warning")
             return
         what = " / ".join(x for x in (process, title, url_glob) if x)
         log.info("registered profile=%s match=%s config=%s", pid,
                  profile["match"], self._config_path)
-        self._notify("enter-router",
+        self._notify("ぺちぺちエンター",
                      f"登録しました: {pid} ({what}) → {os.path.basename(self._config_path)}",
                      "info", action=f"profiles:{pid}")
 
@@ -626,10 +630,10 @@ class EnterRouterApp:
             combo = out.resolved[4:]
             sent = inject.send_combo(combo, held)
             if out.action == "send_cleanup":
-                log.info("inject cleanup combo=%s events=%d (remove the leftover newline)",
+                dlog.info("inject cleanup combo=%s events=%d (remove the leftover newline)",
                          combo, sent)
             else:
-                log.info("inject combo=%s held=%s events=%d", combo, held, sent)
+                dlog.info("inject combo=%s held=%s events=%d", combo, held, sent)
             if out.action == "enter2":
                 self._schedule_send_cleanup()
             return
@@ -641,7 +645,7 @@ class EnterRouterApp:
         if copies:
             from enter_router.platform import inject
             sent = inject.send_enter(copies, held)
-            log.info("inject enter copies=%d held=%s events=%d", copies, held, sent)
+            dlog.info("inject enter copies=%d held=%s events=%d", copies, held, sent)
 
     def _schedule_send_cleanup(self) -> None:
         """Remove the newline a "send and clear" input leaves behind (v2-m).
@@ -682,7 +686,7 @@ class EnterRouterApp:
             foreground=fg,
             captured_text=None,
         )
-        log.info("sink_queued resolved=%s op=%s profile=%s", out.resolved, op,
+        dlog.info("sink_queued resolved=%s op=%s profile=%s", out.resolved, op,
                  profile.id if profile else "-")
         submitted = False
         try:
@@ -716,9 +720,12 @@ class EnterRouterApp:
             self._sync_timer()
         self._last_sink_result = f"{result.sink}: {result.status}" + (
             f" ({result.failure})" if result.failure else "")
-        log.info("sink_finished sink=%s status=%s failure=%s",
-                 result.sink, result.status, result.failure or "-")
+        dlog.info("sink_finished sink=%s status=%s failure=%s",
+                  result.sink, result.status, result.failure or "-")
         if not result.ok:
+            # A failed sink is not routine: keep it in the quiet log too.
+            log.warning("sink_failed sink=%s status=%s failure=%s",
+                        result.sink, result.status, result.failure or "-")
             self._last_error = self._last_sink_result
         _ = out
 
@@ -769,7 +776,7 @@ class EnterRouterApp:
         self._state = "panic"
         log.error("panic state entered reason=%s", reason)
         if self._panic_notify:
-            self._notify("enter-router", "パニック停止: キー横取りを停止しました", "warning")
+            self._notify("ぺちぺちエンター", "パニック停止: キー横取りを停止しました", "warning")
         try:
             from enter_router.platform import hook as hook_mod
             self._hook_stop_intent = "panic"      # we asked: do not auto-repair
@@ -790,7 +797,7 @@ class EnterRouterApp:
         self._start_log_retention()
         self._watcher = config_watcher.ConfigWatcher(
             self._config_path, self._apply_config, self._on_config_error).start()
-        log.info("enter-router %s started (config=%s)", __version__, self._config_path)
+        log.info("ぺちぺちエンター %s started (config=%s)", __version__, self._config_path)
 
     # -- log retention ------------------------------------------------------
     def _start_log_retention(self) -> None:
@@ -852,7 +859,7 @@ class EnterRouterApp:
             with self._lock:
                 self._state = "paused"
             log.error("hook repair gave up after %d attempts", attempt)
-            self._notify("enter-router",
+            self._notify("ぺちぺちエンター",
                          "キーフックが外れたままです（再装着に失敗）。"
                          "トレイの「再開」で復帰してください。", "error")
             return
@@ -888,7 +895,7 @@ class EnterRouterApp:
             except BaseException as e:
                 log.exception("hook install failed")
                 self._last_error = f"hook install failed: {e}"
-                self._notify("enter-router", f"キーフックを開始できません: {e}", "error")
+                self._notify("ぺちぺちエンター", f"キーフックを開始できません: {e}", "error")
 
         self._hook_stop_intent = ""
         self._hook_thread = threading.Thread(target=loop, name="hook", daemon=True)
@@ -1001,7 +1008,7 @@ class EnterRouterApp:
                 except BaseException:
                     pass
         try:
-            self._notify("enter-router",
+            self._notify("ぺちぺちエンター",
                          "応答が停止したため終了します（キーボードは復旧します）", "error")
         except BaseException:
             pass
@@ -1028,7 +1035,7 @@ class EnterRouterApp:
 
     def _on_config_error(self, message: str) -> None:
         self._last_error = f"config: {message}"
-        self._notify("enter-router", f"設定が不正のため旧設定を継続します: {message}",
+        self._notify("ぺちぺちエンター", f"設定が不正のため旧設定を継続します: {message}",
                      "warning")
 
     def _config_dict_from_disk(self) -> dict | None:
@@ -1229,14 +1236,14 @@ def run(options: RunOptions, argv: list[str] | None = None) -> int:
     try:
         config, config_path = load_config(options.config)
     except (ConfigError, OSError) as e:
-        print(f"enter-router: config error: {e}", file=sys.stderr)
+        print(f"PechiPechiEnter: config error: {e}", file=sys.stderr)
         return EXIT_CONFIG
 
     console = sys.stderr is not None
     try:
         log_path = logsetup.setup(config.logging, appdata_dir(), console=console)
     except OSError as e:
-        print(f"enter-router: cannot write logs ({e})", file=sys.stderr)
+        print(f"PechiPechiEnter: cannot write logs ({e})", file=sys.stderr)
         log_path = ""
     for warning in config.warnings:
         log.warning("config warning: %s", warning)
@@ -1249,7 +1256,7 @@ def run(options: RunOptions, argv: list[str] | None = None) -> int:
     if options.dry_run:
         result = dryrun.run(config, emit=print, config_path=config_path)
         dryrun.log_summary(result)
-        print(f"enter-router {__version__}: dry-run complete "
+        print(f"PechiPechiEnter {__version__}: dry-run complete "
               f"(no hook installed, nothing injected)")
         return EXIT_OK
 
@@ -1264,9 +1271,9 @@ def run(options: RunOptions, argv: list[str] | None = None) -> int:
             log.exception("could not ask the running instance for its window")
             opened = False
         if opened:
-            print("enter-router: asked the running instance to open its settings window.")
+            print("PechiPechiEnter: asked the running instance to open its settings window.")
             return EXIT_OK
-        print("enter-router: no running instance with a tray window was found.\n"
+        print("PechiPechiEnter: no running instance with a tray window was found.\n"
               "Start it once (pythonw src\\enter_router\\main.py), then retry.\n"
               "The window is also reachable from the tray menu (設定を開く). Windows 11\n"
               "keeps *new* tray icons in the notification-area overflow until you pin\n"
@@ -1274,7 +1281,7 @@ def run(options: RunOptions, argv: list[str] | None = None) -> int:
         return EXIT_OK
 
     app = EnterRouterApp(config, config_path)
-    log.info("enter-router %s starting (version=%s)", __version__, __version__)
+    log.info("ぺちぺちエンター %s starting (version=%s)", __version__, __version__)
     return run_resident(app)
 
 

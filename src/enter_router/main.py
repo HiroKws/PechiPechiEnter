@@ -32,12 +32,13 @@ from enter_router import __version__
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="enter-router", description=__doc__)
+    p = argparse.ArgumentParser(prog="PechiPechiEnter", description=__doc__)
     p.add_argument("--config", metavar="PATH", default=None)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--once", action="store_true")
     p.add_argument("--settings", action="store_true")
-    p.add_argument("--version", action="version", version=f"enter-router {__version__}")
+    p.add_argument("--version", action="version",
+                   version=f"PechiPechiEnter (ぺちぺちエンター) {__version__}")
     return p
 
 

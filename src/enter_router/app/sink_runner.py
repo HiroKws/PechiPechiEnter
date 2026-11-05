@@ -173,7 +173,7 @@ class SinkWorker:
             log.error("sink queue full — job dropped (resolved=%s, dropped=%d)",
                       job.resolved, self.dropped)
             if self._notify is not None:
-                self._notify("enter-router", "処理待ちが上限に達しました（1 件破棄）", "warning")
+                self._notify("ぺちぺちエンター", "処理待ちが上限に達しました（1 件破棄）", "warning")
             return False
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -219,7 +219,7 @@ class SinkWorker:
                 # design §5.4-3: capture failure => the trigger is consumed, NEVER re-sent
                 log.error("capture failed for resolved=%s — nothing sent", job.resolved)
                 if self._notify is not None:
-                    self._notify("enter-router",
+                    self._notify("ぺちぺちエンター",
                                  "入力テキストを取得できませんでした（送信せず破棄）", "warning")
                 result = SinkResult(sink=job.resolved, status="skipped",
                                     failure="capture_failed",
